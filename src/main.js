@@ -216,7 +216,7 @@ vec2 GetDist(vec3 p) {
         float j = hash(vec3(id, 123.45));
 
         if (j > 0.6) {
-            vec3 treeBase = vec3(id * grid + (j-0.5)*2.0, 0.0, 0.0).xzy;
+            vec3 treeBase = vec3(id * grid + (j-0.5)*2.0, 0.0).xzy;
             float actualH = -Terrain(treeBase);
             if (actualH > uWaterLevel + 0.5 && actualH < uTerrainHeight * 0.6) {
                 res = opU(res, vec2(TreeSDF(p - vec3(treeBase.x, actualH, treeBase.z), 0.5), 2.0));
