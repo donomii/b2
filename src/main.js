@@ -1,9 +1,9 @@
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import GUI from 'lil-gui';
+import * as THREE from 'https://esm.sh/three@0.160.0';
+import { OrbitControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+import { EffectComposer } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+import GUI from 'https://esm.sh/lil-gui@0.19.0';
 
 const vertexShader = `
 varying vec2 vUv;
@@ -120,10 +120,15 @@ float TreeSDF(vec3 p, float scale) {
     return min(trunk, foliage);
 }
 
-float sdCapsule(vec3 p, vec3 a, vec3 b, float r) {
-    vec3 pa = p - a, ba = b - a;
-    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-    return length(pa - ba * h) - r;
+float sdHexPrism(vec3 p, vec2 h) {
+    const vec3 k = vec3(-0.8660254, 0.5, 0.5773502);
+    p = abs(p);
+    p.xy -= 2.0 * min(dot(k.xy, p.xy), 0.0) * k.xy;
+    vec2 d = vec2(
+        length(p.xy - vec2(clamp(p.x, -k.z * h.x, k.z * h.x), h.x)) * sign(p.y - h.x),
+        p.z - h.y
+    );
+    return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
 }
 
 float Mandelbulb(vec3 p) {
@@ -186,13 +191,12 @@ vec2 GetDist(vec3 p) {
         res = opU(res, vec2(dFractal, 3.0));
     }
 
-    // Monoliths (ID 3)
+    // Monoliths & Crystals (ID 3)
     if (uMonolithAmount > 0.01) {
-        vec2 grid = vec2(30.0);
+        vec2 grid = vec2(40.0);
         vec2 id = floor(p.xz / grid);
-        vec2 q = mod(p.xz, grid) - 0.5 * grid;
-        float h = 15.0 + hash(vec3(id, 456.0)) * 10.0;
-        float dMonolith = sdBox(p - vec3(id * grid, h * 0.5, id * grid).xzy * vec3(1,0,1) - vec3(0, 1.0, 0), vec3(1.0, h * 0.5, 1.0));
+        float h = 10.0 + hash(vec3(id, 789.0)) * 15.0;
+        float dMonolith = sdHexPrism(p.xzy - vec3(id.x * grid.x, 0.0, id.y * grid.y), vec2(2.0, h));
         res = opU(res, vec2(dMonolith, 3.0));
     }
 
@@ -212,12 +216,8 @@ vec2 GetDist(vec3 p) {
         float j = hash(vec3(id, 123.45));
 
         if (j > 0.6) {
-            vec3 treeBase = vec3(id * grid + (j-0.5)*2.0, 0.0, 0.0).xzy; // Temp Y for Terrain sample
-            float h = uTerrainHeight - Terrain(treeBase); // Height is Terrain(p) = p.y - h => h = p.y - Terrain(p)
-            // Wait, Terrain(p) = p.y - terrain_height. If p.y = 0, Terrain(p) = -terrain_height.
-            // So height = -Terrain(vec3(x, 0, z));
+            vec3 treeBase = vec3(id * grid + (j-0.5)*2.0, 0.0, 0.0).xzy;
             float actualH = -Terrain(treeBase);
-
             if (actualH > uWaterLevel + 0.5 && actualH < uTerrainHeight * 0.6) {
                 res = opU(res, vec2(TreeSDF(p - vec3(treeBase.x, actualH, treeBase.z), 0.5), 2.0));
             }
@@ -336,7 +336,7 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
         // Back light to fill in silhouettes
         float bac = clamp(dot(n, normalize(vec3(-sunDir.x, 0.0, -sunDir.z))), 0.0, 1.0) * 0.2;
 
-        // Combine lighting
+        // Combine lighting components
         vec3 lin = vec3(0.0);
         lin += dif * shadow * vec3(1.2, 1.1, 1.0); // Sun
         lin += skyLight * ao * 0.5;                // Sky
@@ -360,8 +360,6 @@ void main() {
     uv.x *= iResolution.x / iResolution.y;
 
     vec3 ro = iCameraPos;
-
-    // Ray direction from camera matrix
     vec3 rd = normalize((iCameraMatrix * vec4(uv.x, uv.y, -1.5, 0.0)).xyz);
 
 
@@ -386,24 +384,9 @@ void main() {
 `;
 
 class BryceApp {
-    private scene: THREE.Scene;
-    private camera: THREE.PerspectiveCamera;
-    private quadCamera: THREE.OrthographicCamera;
-    private renderer: THREE.WebGLRenderer;
-    private controls: OrbitControls;
-    private composer: EffectComposer;
-    private bloomPass: UnrealBloomPass;
-    private material: THREE.ShaderMaterial;
-    private gui: GUI;
-    private startTime: number;
-
     constructor() {
         this.scene = new THREE.Scene();
-
-        // Quad camera for rendering the full-screen fragment shader
         this.quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-
-        // Perspective camera for OrbitControls logic
         this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.camera.position.set(0, 15, 30);
         this.camera.lookAt(0, 0, 0);
@@ -463,9 +446,10 @@ class BryceApp {
         this.animate();
     }
 
-    private onMouseClick(event: MouseEvent) {
+    onMouseClick(event) {
         if (this.material.uniforms.uNumUserObjects.value >= 8) return;
 
+        // Mouse NDC
         const mouse = new THREE.Vector2(
             (event.clientX / window.innerWidth) * 2 - 1,
             -(event.clientY / window.innerHeight) * 2 + 1
@@ -475,7 +459,7 @@ class BryceApp {
         raycaster.setFromCamera(mouse, this.camera);
         const ray = raycaster.ray;
 
-        // Better CPU placement: Find intersection with estimated average terrain height
+        // Intersect with estimated terrain plane
         const targetY = this.material.uniforms.uTerrainHeight.value * 0.4;
         let t = (targetY - ray.origin.y) / ray.direction.y;
 
@@ -487,10 +471,11 @@ class BryceApp {
         this.material.uniforms.uUserObjects.value[idx].copy(pos);
         this.material.uniforms.uNumUserObjects.value++;
 
+        // Ensure Three.js notices the array change
         this.material.uniforms.uUserObjects.value = [...this.material.uniforms.uUserObjects.value];
     }
 
-    private setupGUI() {
+    setupGUI() {
         const terrainFolder = this.gui.addFolder('Terrain');
         terrainFolder.add(this.material.uniforms.uTerrainScale, 'value', 0.01, 2.0).name('Scale');
         terrainFolder.add(this.material.uniforms.uTerrainHeight, 'value', 0.0, 40.0).name('Height');
@@ -517,19 +502,18 @@ class BryceApp {
 
         const colorFolder = this.gui.addFolder('Colors');
         const colorParams = { sky: '#80b3ff', terrain: '#664d33', snow: '#e6e6e6', water: '#1a4d80', presets: 'Alpine' };
-        const presets: any = {
+        const presets = {
             'Alpine': { sky: '#80b3ff', terrain: '#664d33', snow: '#e6e6e6', water: '#1a4d80' },
             'Mars': { sky: '#ff9966', terrain: '#802b00', snow: '#ffccb3', water: '#4d1a00' },
             'Arctic': { sky: '#e6f2ff', terrain: '#b3ccd9', snow: '#ffffff', water: '#80b3cc' }
         };
-        colorFolder.add(colorParams, 'presets', Object.keys(presets)).onChange((v: string) => {
+        colorFolder.add(colorParams, 'presets', Object.keys(presets)).onChange((v) => {
             const p = presets[v];
             this.material.uniforms.uSkyColor.value.set(p.sky);
             this.material.uniforms.uTerrainColor.value.set(p.terrain);
             this.material.uniforms.uSnowColor.value.set(p.snow);
             this.material.uniforms.uWaterColor.value.set(p.water);
 
-            // Standard lil-gui update method
             for (const folder of this.gui.folders) {
                 for (const controller of folder.controllers) {
                     controller.updateDisplay();
@@ -541,19 +525,17 @@ class BryceApp {
         });
     }
 
-    private onWindowResize() {
+    onWindowResize() {
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.composer.setSize(window.innerWidth, window.innerHeight);
         this.material.uniforms.iResolution.value.set(window.innerWidth, window.innerHeight);
     }
 
-    private animate() {
+    animate() {
         requestAnimationFrame(this.animate.bind(this));
         this.material.uniforms.iTime.value = (Date.now() - this.startTime) / 1000;
 
         this.controls.update();
-
-        // Sync camera to shader
         this.material.uniforms.iCameraPos.value.copy(this.camera.position);
         this.material.uniforms.iCameraMatrix.value.copy(this.camera.matrixWorld);
 
