@@ -1,8 +1,8 @@
-import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import GUI from 'lil-gui';
+import * as THREE from 'https://esm.sh/three@0.160.0';
+import { EffectComposer } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+import GUI from 'https://esm.sh/lil-gui@0.19.0';
 
 const vertexShader = `
 varying vec2 vUv;
@@ -353,15 +353,6 @@ void main() {
 `;
 
 class BryceApp {
-    private scene: THREE.Scene;
-    private camera: THREE.OrthographicCamera;
-    private renderer: THREE.WebGLRenderer;
-    private composer: EffectComposer;
-    private bloomPass: UnrealBloomPass;
-    private material: THREE.ShaderMaterial;
-    private gui: GUI;
-    private startTime: number;
-
     constructor() {
         this.scene = new THREE.Scene();
         this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -416,26 +407,17 @@ class BryceApp {
         this.animate();
     }
 
-    private onMouseClick(event: MouseEvent) {
+    onMouseClick(event) {
         if (this.material.uniforms.uNumUserObjects.value >= 8) return;
-
-        // Simple approach: Place object at current look-at position
-        // In a real editor we'd raycast, but for this demo, let's just use the center of view
         const pos = this.material.uniforms.iCameraLookAt.value.clone();
-
-        // Add some variety
         pos.x += (Math.random() - 0.5) * 5;
         pos.z += (Math.random() - 0.5) * 5;
-
-        // Height will be auto-calculated in shader if we just pass XZ,
-        // but for simplicity we just place it at lookat height or slightly above
-
         const idx = this.material.uniforms.uNumUserObjects.value;
         this.material.uniforms.uUserObjects.value[idx].copy(pos);
         this.material.uniforms.uNumUserObjects.value++;
     }
 
-    private setupGUI() {
+    setupGUI() {
         const camFolder = this.gui.addFolder('Camera');
         camFolder.add(this.material.uniforms.iCameraPos.value, 'x', -50, 50).name('Pos X');
         camFolder.add(this.material.uniforms.iCameraPos.value, 'y', -50, 50).name('Pos Y');
@@ -465,19 +447,18 @@ class BryceApp {
 
         const colorFolder = this.gui.addFolder('Colors');
         const colorParams = { sky: '#80b3ff', terrain: '#664d33', snow: '#e6e6e6', water: '#1a4d80', presets: 'Alpine' };
-        const presets: any = {
+        const presets = {
             'Alpine': { sky: '#80b3ff', terrain: '#664d33', snow: '#e6e6e6', water: '#1a4d80' },
             'Mars': { sky: '#ff9966', terrain: '#802b00', snow: '#ffccb3', water: '#4d1a00' },
             'Arctic': { sky: '#e6f2ff', terrain: '#b3ccd9', snow: '#ffffff', water: '#80b3cc' }
         };
-        colorFolder.add(colorParams, 'presets', Object.keys(presets)).onChange((v: string) => {
+        colorFolder.add(colorParams, 'presets', Object.keys(presets)).onChange((v) => {
             const p = presets[v];
             this.material.uniforms.uSkyColor.value.set(p.sky);
             this.material.uniforms.uTerrainColor.value.set(p.terrain);
             this.material.uniforms.uSnowColor.value.set(p.snow);
             this.material.uniforms.uWaterColor.value.set(p.water);
 
-            // Standard lil-gui update method
             for (const folder of this.gui.folders) {
                 for (const controller of folder.controllers) {
                     controller.updateDisplay();
@@ -489,13 +470,13 @@ class BryceApp {
         });
     }
 
-    private onWindowResize() {
+    onWindowResize() {
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.composer.setSize(window.innerWidth, window.innerHeight);
         this.material.uniforms.iResolution.value.set(window.innerWidth, window.innerHeight);
     }
 
-    private animate() {
+    animate() {
         requestAnimationFrame(this.animate.bind(this));
         this.material.uniforms.iTime.value = (Date.now() - this.startTime) / 1000;
         this.composer.render();
