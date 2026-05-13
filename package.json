@@ -1,0 +1,19 @@
+{
+  "name": "bryce-3d-modern",
+  "version": "1.0.0",
+  "description": "A modern procedural landscape generator inspired by Bryce3D",
+  "main": "index.html",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.160.0",
+    "lil-gui": "^0.19.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "typescript": "^5.3.0"
+  }
+}
