@@ -37,6 +37,7 @@ uniform float uTerrainDetail;
 uniform float uSeed;
 uniform float uFractalAmount;
 uniform float uMonolithAmount;
+uniform float uStormAmount;
 uniform vec3 uUserObjects[8];
 uniform float uNumUserObjects;
 
@@ -161,6 +162,12 @@ vec2 opU(vec2 d1, vec2 d2) {
 }
 
 float Terrain(vec3 p) {
+    vec2 p2 = p.xz;
+    float dist = length(p2);
+
+    // Radial mask to create an island
+    float islandMask = smoothstep(50.0, 10.0, dist);
+
     vec3 pScaled = p * uTerrainScale;
     float n1 = fbm(pScaled * 0.5, 4);
     float n2 = fbm(pScaled * 0.5 + vec3(5.2, 1.3, 2.8), 4);
@@ -168,6 +175,10 @@ float Terrain(vec3 p) {
 
     float h = ridgedFbm(pScaled + offset, 8) * uTerrainHeight;
     h += fbm(pScaled * 0.2 + 10.0, 4) * uTerrainHeight * 0.5;
+
+    // Apply island mask and add a small base pedestal
+    h = h * islandMask + (islandMask * 0.5);
+
     return p.y - h;
 }
 
@@ -276,24 +287,44 @@ vec3 GetNormal(vec3 p) {
 
 vec3 GetSkyColor(vec3 rd, vec3 sunDir) {
     float sun = max(0.0, dot(rd, sunDir));
-    vec3 zenith = uSkyColor;
-    vec3 horizon = mix(uSkyColor, vec3(0.7, 0.8, 1.0), 0.5);
+
+    // Stormy sky color
+    vec3 zenith = mix(uSkyColor, vec3(0.05, 0.05, 0.1), uStormAmount);
+    vec3 horizon = mix(mix(uSkyColor, vec3(0.7, 0.8, 1.0), 0.5), vec3(0.1, 0.1, 0.15), uStormAmount);
     vec3 col = mix(horizon, zenith, pow(max(0.0, rd.y), 0.5));
-    col += 0.3 * vec3(1.0, 0.7, 0.4) * pow(sun, 8.0);
-    col += 0.5 * vec3(1.0, 0.9, 0.7) * pow(sun, 500.0);
+
+    col += 0.3 * vec3(1.0, 0.7, 0.4) * pow(sun, 8.0) * (1.0 - uStormAmount);
+    col += 0.5 * vec3(1.0, 0.9, 0.7) * pow(sun, 500.0) * (1.0 - uStormAmount);
+
+    // Procedural Clouds
     if (rd.y > 0.0) {
         vec2 uv = rd.xz / (rd.y + 0.001);
         float cl = 0.0;
         float amp = 0.5;
-        vec2 p = uv * 0.05 + iTime * 0.005;
-        for(int i=0; i<4; i++) {
+        vec2 p = uv * 0.05 + iTime * 0.01;
+        for(int i=0; i<5; i++) {
             cl += amp * noise(vec3(p.x, 0.0, p.y));
-            p *= 2.5;
-            amp *= 0.4;
+            p *= 2.2;
+            amp *= 0.45;
         }
-        float cloudMask = smoothstep(1.0 - uCloudDensity, 1.1 - uCloudDensity, cl);
-        col = mix(col, vec3(1.0), cloudMask * rd.y);
+        float dens = mix(uCloudDensity, uCloudDensity * 2.0, uStormAmount);
+        float cloudMask = smoothstep(1.1 - dens, 1.3 - dens, cl);
+        vec3 cloudCol = mix(vec3(1.0), vec3(0.2, 0.2, 0.25), uStormAmount);
+        col = mix(col, cloudCol, cloudMask * rd.y);
     }
+
+    // Lightning Bolt in Sky
+    if (uStormAmount > 0.1) {
+        float flashTime = iTime * 2.0;
+        float flash = step(0.98, fract(sin(floor(flashTime) * 456.789)));
+        if (flash > 0.5) {
+            float seed = floor(flashTime);
+            vec2 boltPos = (vec2(fract(sin(seed*12.3)), fract(cos(seed*45.6))) - 0.5) * 50.0;
+            float d = length(rd.xz * 20.0 - boltPos);
+            col += vec3(0.8, 0.9, 1.0) * exp(-d * 2.0) * rd.y;
+        }
+    }
+
     return col;
 }
 
@@ -304,24 +335,48 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
         vec3 n = GetNormal(p);
         float detail = triPlanarNoise(p, n);
         vec2 res = GetDist(p);
-        vec3 tCol = uTerrainColor;
 
-        if (res.y > 0.5 && res.y < 1.5) {
-            tCol = vec3(0.3, 0.28, 0.25);
-        } else if (res.y > 1.5 && res.y < 2.5) {
-            tCol = mix(vec3(0.1, 0.2, 0.05), vec3(0.2, 0.15, 0.1), smoothstep(0.0, 0.2, p.y - Terrain(p)));
-        } else if (res.y > 2.5) {
-            tCol = vec3(0.5, 0.2, 0.8) * (0.5 + 0.5 * sin(iTime + p.y));
-        }
-
+        // Advanced Multi-layered Biome Coloring
+        vec3 tCol;
         float slope = 1.0 - n.y;
-        float rock = smoothstep(0.2, 0.5, slope + detail * 0.1);
-        if (res.y < 0.5) tCol = mix(tCol, vec3(0.15, 0.12, 0.1), rock);
+        float h = p.y;
 
-        float snowLine = uTerrainHeight * 0.7;
-        float snow = smoothstep(snowLine, snowLine + 2.0, p.y + (detail - 0.5) * 2.0);
-        snow *= (1.0 - smoothstep(0.4, 0.7, slope));
-        if (res.y < 0.5) tCol = mix(tCol, uSnowColor * (0.9 + 0.1 * detail), snow);
+        if (res.y < 0.5) { // Terrain
+            // Base Layers
+            vec3 sand = vec3(0.8, 0.7, 0.5);
+            vec3 grass = vec3(0.2, 0.4, 0.1);
+            vec3 forest = vec3(0.05, 0.15, 0.05);
+            vec3 rock = vec3(0.3, 0.28, 0.25);
+            vec3 snow = uSnowColor;
+
+            // Height-based blending
+            float beachMask = smoothstep(uWaterLevel - 0.2, uWaterLevel + 0.5, h);
+            float grassMask = smoothstep(uWaterLevel + 0.2, uWaterLevel + 2.0, h);
+            float forestMask = smoothstep(uWaterLevel + 3.0, uWaterLevel + 8.0, h);
+            float rockMask = smoothstep(uTerrainHeight * 0.5, uTerrainHeight * 0.8, h);
+            float snowMask = smoothstep(uTerrainHeight * 0.7, uTerrainHeight * 0.9, h);
+
+            tCol = mix(sand, grass, grassMask);
+            tCol = mix(tCol, forest, forestMask);
+
+            // Slope-based transitions
+            float slopeRock = smoothstep(0.3, 0.6, slope + detail * 0.1);
+            tCol = mix(tCol, rock, slopeRock);
+
+            // High altitude rock/snow
+            tCol = mix(tCol, rock, rockMask);
+
+            // Snow accumulation (only on flatter areas at peak)
+            float actualSnow = snowMask * (1.0 - smoothstep(0.4, 0.8, slope));
+            tCol = mix(tCol, snow * (0.9 + 0.1 * detail), actualSnow);
+
+        } else if (res.y > 0.5 && res.y < 1.5) {
+            tCol = vec3(0.35, 0.3, 0.25); // Rocks/User Objects
+        } else if (res.y > 1.5 && res.y < 2.5) {
+            tCol = mix(vec3(0.05, 0.1, 0.02), vec3(0.2, 0.1, 0.05), smoothstep(0.0, 0.2, p.y - Terrain(p))); // Trees
+        } else if (res.y > 2.5) {
+            tCol = vec3(0.5, 0.2, 0.8) * (0.5 + 0.5 * sin(iTime + p.y)); // Special objects
+        }
 
         tCol *= (0.8 + 0.4 * detail * uTerrainDetail);
 
@@ -338,10 +393,20 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
 
         // Combine lighting components
         vec3 lin = vec3(0.0);
-        lin += dif * shadow * vec3(1.2, 1.1, 1.0); // Sun
-        lin += skyLight * ao * 0.5;                // Sky
-        lin += amb * vec3(0.1, 0.08, 0.05) * ao;   // Ground bounce
-        lin += bac * ao * 0.1;                     // Back fill
+
+        // Sun light (reduced in storm)
+        lin += dif * shadow * vec3(1.2, 1.1, 1.0) * (1.0 - uStormAmount);
+
+        // Sky/Ambient
+        lin += skyLight * ao * 0.5;
+        lin += amb * vec3(0.1, 0.08, 0.05) * ao;
+        lin += bac * ao * 0.1;
+
+        // Lightning Flash on Terrain
+        if (uStormAmount > 0.1) {
+            float flash = step(0.98, fract(sin(floor(iTime * 2.0) * 456.789)));
+            lin += flash * vec3(1.0, 1.1, 1.5) * ao * 2.0;
+        }
 
         vec3 col = tCol * lin;
         if (snow > 0.5 && res.y < 0.5) {
@@ -398,6 +463,11 @@ class BryceApp {
 
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.05;
+        this.controls.screenSpacePanning = false;
+        this.controls.minDistance = 5;
+        this.controls.maxDistance = 200;
+        this.controls.maxPolarAngle = Math.PI / 2 - 0.05; // Prevent going below ground
 
         this.composer = new EffectComposer(this.renderer);
         const renderPass = new RenderPass(this.scene, this.quadCamera);
@@ -434,7 +504,8 @@ class BryceApp {
                 uFractalAmount: { value: 0.0 },
                 uMonolithAmount: { value: 0.0 },
                 uUserObjects: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
-                uNumUserObjects: { value: 0 }
+                uNumUserObjects: { value: 0 },
+                uStormAmount: { value: 0.0 }
             }
         });
         const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.material);
@@ -494,6 +565,7 @@ class BryceApp {
         envFolder.add(this.material.uniforms.uWaterLevel, 'value', -5, 5).name('Water Level');
         envFolder.add(this.material.uniforms.uFractalAmount, 'value', 0, 1).name('Fractal');
         envFolder.add(this.material.uniforms.uMonolithAmount, 'value', 0, 1).name('Monoliths');
+        envFolder.add(this.material.uniforms.uStormAmount, 'value', 0, 1).name('Storm Intensity');
 
         const bloomFolder = this.gui.addFolder('Bloom');
         bloomFolder.add(this.bloomPass, 'strength', 0, 3).name('Strength');
@@ -505,7 +577,8 @@ class BryceApp {
         const presets = {
             'Alpine': { sky: '#80b3ff', terrain: '#664d33', snow: '#e6e6e6', water: '#1a4d80' },
             'Mars': { sky: '#ff9966', terrain: '#802b00', snow: '#ffccb3', water: '#4d1a00' },
-            'Arctic': { sky: '#e6f2ff', terrain: '#b3ccd9', snow: '#ffffff', water: '#80b3cc' }
+            'Arctic': { sky: '#e6f2ff', terrain: '#b3ccd9', snow: '#ffffff', water: '#80b3cc' },
+            'Tropical': { sky: '#00ccff', terrain: '#1a4d00', snow: '#ffffff', water: '#00ffcc' }
         };
         colorFolder.add(colorParams, 'presets', Object.keys(presets)).onChange((v) => {
             const p = presets[v];
