@@ -340,6 +340,7 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
         vec3 tCol;
         float slope = 1.0 - n.y;
         float h = p.y;
+        float isSnow = 0.0;
 
         if (res.y < 0.5) { // Terrain
             // Base Layers
@@ -347,7 +348,7 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
             vec3 grass = vec3(0.2, 0.4, 0.1);
             vec3 forest = vec3(0.05, 0.15, 0.05);
             vec3 rock = vec3(0.3, 0.28, 0.25);
-            vec3 snow = uSnowColor;
+            vec3 snowCol = uSnowColor;
 
             // Height-based blending
             float beachMask = smoothstep(uWaterLevel - 0.2, uWaterLevel + 0.5, h);
@@ -367,8 +368,8 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
             tCol = mix(tCol, rock, rockMask);
 
             // Snow accumulation (only on flatter areas at peak)
-            float actualSnow = snowMask * (1.0 - smoothstep(0.4, 0.8, slope));
-            tCol = mix(tCol, snow * (0.9 + 0.1 * detail), actualSnow);
+            isSnow = snowMask * (1.0 - smoothstep(0.4, 0.8, slope));
+            tCol = mix(tCol, snowCol * (0.9 + 0.1 * detail), isSnow);
 
         } else if (res.y > 0.5 && res.y < 1.5) {
             tCol = vec3(0.35, 0.3, 0.25); // Rocks/User Objects
@@ -409,10 +410,10 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
         }
 
         vec3 col = tCol * lin;
-        if (snow > 0.5 && res.y < 0.5) {
+        if (isSnow > 0.1 && res.y < 0.5) {
             vec3 ref = reflect(rd, n);
             float spec = pow(clamp(dot(ref, sunDir), 0.0, 1.0), 32.0);
-            col += uSnowColor * spec * shadow * snow;
+            col += uSnowColor * spec * shadow * isSnow;
         }
         float fogAmount = 1.0 - exp(-d * uFogDensity);
         return mix(col, uSkyColor, fogAmount);
