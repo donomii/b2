@@ -5,6 +5,8 @@ import { RenderPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postproces
 import { UnrealBloomPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js';
 import GUI from 'https://esm.sh/lil-gui@0.19.0';
 
+console.log("BryceApp: Modules loaded");
+
 const vertexShader = `
 varying vec2 vUv;
 void main() {
@@ -41,19 +43,17 @@ uniform float uStormAmount;
 uniform vec3 uUserObjects[8];
 uniform float uNumUserObjects;
 
-const int MAX_STEPS = 96;
+const int MAX_STEPS = 64;
 const float MAX_DIST = 100.0;
-const float SURF_DIST = 0.005;
+const float SURF_DIST = 0.01;
 
-// Hash function for noise
 float hash(vec3 p) {
     p += uSeed;
-    p = fract(p * 0.3183099 + 0.1);
-    p *= 17.0;
-    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+    vec3 p3 = fract(p * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
 }
 
-// 3D Value Noise
 float noise(vec3 x) {
     vec3 i = floor(x);
     vec3 f = fract(x);
@@ -64,11 +64,10 @@ float noise(vec3 x) {
                    mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
 
-// Fractal Brownian Motion with LOD
 float fbm(vec3 p, int octaves) {
     float value = 0.0;
     float amplitude = 0.5;
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 8; i++) {
         if(i >= octaves) break;
         value += amplitude * noise(p);
         p *= 2.0;
@@ -80,7 +79,7 @@ float fbm(vec3 p, int octaves) {
 float ridgedFbm(vec3 p, int octaves) {
     float value = 0.0;
     float amplitude = 0.5;
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 8; i++) {
         if(i >= octaves) break;
         float n = noise(p);
         n = 1.0 - abs(n * 2.0 - 1.0);
@@ -93,7 +92,8 @@ float ridgedFbm(vec3 p, int octaves) {
 
 float triPlanarNoise(vec3 p, vec3 n) {
     vec3 m = pow(abs(n), vec3(8.0));
-    m /= (m.x + m.y + m.z);
+    float sum = m.x + m.y + m.z;
+    m /= (sum + 0.0001);
     float x = noise(vec3(p.yz * 8.0, 0.0));
     float y = noise(vec3(p.xz * 8.0, 0.0));
     float z = noise(vec3(p.xy * 8.0, 0.0));
@@ -164,77 +164,68 @@ vec2 opU(vec2 d1, vec2 d2) {
 float Terrain(vec3 p) {
     vec2 p2 = p.xz;
     float dist = length(p2);
+    float islandMask = smoothstep(60.0, 15.0, dist);
 
-    // Radial mask to create an island
-    float islandMask = smoothstep(50.0, 10.0, dist);
+    // Domain warping
+    vec3 pWarp = p * uTerrainScale;
+    float w1 = fbm(pWarp * 0.3 + iTime * 0.02, 3);
+    float w2 = fbm(pWarp * 0.3 + vec3(12.4, 5.2, 1.3), 3);
+    pWarp += vec3(w1, w2, 0.0) * 0.8;
 
-    vec3 pScaled = p * uTerrainScale;
-    float n1 = fbm(pScaled * 0.5, 4);
-    float n2 = fbm(pScaled * 0.5 + vec3(5.2, 1.3, 2.8), 4);
-    vec3 offset = vec3(n1, n2, 0.0) * 0.5;
+    float h = ridgedFbm(pWarp, 8) * uTerrainHeight;
+    h += fbm(pWarp * 0.5 + 20.0, 4) * uTerrainHeight * 0.3;
 
-    float h = ridgedFbm(pScaled + offset, 8) * uTerrainHeight;
-    h += fbm(pScaled * 0.2 + 10.0, 4) * uTerrainHeight * 0.5;
+    // Base shape
+    h = h * islandMask;
 
-    // Apply island mask and add a small base pedestal
-    h = h * islandMask + (islandMask * 0.5);
+    // Add some "Bryce" spikes
+    float spikes = pow(noise(pWarp * 2.0), 4.0) * uTerrainHeight * 0.5;
+    h += spikes * islandMask;
 
     return p.y - h;
 }
 
 vec2 GetDist(vec3 p) {
     vec2 res = vec2(1e10, -1.0);
-
-    // Terrain (ID 0)
     res = opU(res, vec2(Terrain(p), 0.0));
-
-    // Procedural Rocks (ID 1)
     res = opU(res, vec2(RockSDF(p - vec3(2.0, 3.5, 0.0), 1.2), 1.0));
     res = opU(res, vec2(RockSDF(p - vec3(-4.0, 2.8, 3.0), 0.8), 1.0));
-
-    // Primitive Box (ID 1)
     res = opU(res, vec2(sdBox(p - vec3(0.0, 5.0, -5.0), vec3(1.0)), 1.0));
 
-    // Fractal (ID 3)
     if (uFractalAmount > 0.01) {
         vec3 fPos = vec3(0.0, 15.0, 0.0);
         float dFractal = Mandelbulb((p - fPos) * 0.5) * 2.0;
         res = opU(res, vec2(dFractal, 3.0));
     }
 
-    // Monoliths & Crystals (ID 3)
     if (uMonolithAmount > 0.01) {
-        vec2 grid = vec2(40.0);
-        vec2 id = floor(p.xz / grid);
-        float h = 10.0 + hash(vec3(id, 789.0)) * 15.0;
-        float dMonolith = sdHexPrism(p.xzy - vec3(id.x * grid.x, 0.0, id.y * grid.y), vec2(2.0, h));
+        vec2 grid = vec2(30.0);
+        vec2 id = floor((p.xz + grid*0.5) / grid);
+        float h = 5.0 + hash(vec3(id, 789.0)) * 15.0;
+        vec3 mPos = vec3(id.x * grid.x, h * 0.5, id.y * grid.y);
+        float dMonolith = sdHexPrism((p - mPos).xzy, vec2(1.5, h * 0.5));
         res = opU(res, vec2(dMonolith, 3.0));
     }
 
-    // User Objects (ID 1)
     for (int i = 0; i < 8; i++) {
         if (float(i) >= uNumUserObjects) break;
         res = opU(res, vec2(RockSDF(p - uUserObjects[i], 1.0), 1.0));
     }
 
-    // Vegetation (ID 2)
-    vec2 treeP = p.xz;
-    float dist = length(p - iCameraPos);
-    if (dist < 30.0) {
-        vec2 grid = vec2(4.0);
-        vec2 id = floor(treeP / grid);
-        vec2 q = mod(treeP, grid) - 0.5 * grid;
+    float distToCam = length(p - iCameraPos);
+    if (distToCam < 30.0) {
+        vec2 grid = vec2(6.0);
+        vec2 id = floor(p.xz / grid);
         float j = hash(vec3(id, 123.45));
-
         if (j > 0.6) {
-            vec3 treeBase = vec3(id * grid + (j-0.5)*2.0, 0.0).xzy;
-            float actualH = -Terrain(treeBase);
-            if (actualH > uWaterLevel + 0.5 && actualH < uTerrainHeight * 0.6) {
-                res = opU(res, vec2(TreeSDF(p - vec3(treeBase.x, actualH, treeBase.z), 0.5), 2.0));
+            vec2 treeXZ = id * grid + grid * 0.5 + (j - 0.5) * 2.0;
+            vec3 treePos = vec3(treeXZ.x, 0.0, treeXZ.y);
+            float actualH = -Terrain(treePos);
+            if (actualH > uWaterLevel + 0.5 && actualH < uTerrainHeight * 0.7) {
+                res = opU(res, vec2(TreeSDF(p - vec3(treeXZ.x, actualH, treeXZ.y), 0.5), 2.0));
             }
         }
     }
-
     return res;
 }
 
@@ -253,10 +244,10 @@ float RayMarch(vec3 ro, vec3 rd) {
 float GetShadow(vec3 ro, vec3 rd, float mint, float tmax) {
     float res = 1.0;
     float t = mint;
-    for(int i=0; i<32; i++) {
+    for(int i=0; i<16; i++) {
         float h = GetDist(ro + rd * t).x;
-        res = min(res, 16.0 * h / t);
-        t += clamp(h, 0.01, 0.2);
+        res = min(res, 8.0 * h / t);
+        t += clamp(h, 0.02, 0.5);
         if(res < 0.01 || t > tmax) break;
     }
     return clamp(res, 0.0, 1.0);
@@ -282,21 +273,17 @@ vec3 GetNormal(vec3 p) {
         GetDist(p-e.yxy).x,
         GetDist(p-e.yyx).x
     );
+    if (length(n) < 0.0001) return vec3(0, 1, 0);
     return normalize(n);
 }
 
 vec3 GetSkyColor(vec3 rd, vec3 sunDir) {
     float sun = max(0.0, dot(rd, sunDir));
-
-    // Stormy sky color
     vec3 zenith = mix(uSkyColor, vec3(0.05, 0.05, 0.1), uStormAmount);
     vec3 horizon = mix(mix(uSkyColor, vec3(0.7, 0.8, 1.0), 0.5), vec3(0.1, 0.1, 0.15), uStormAmount);
     vec3 col = mix(horizon, zenith, pow(max(0.0, rd.y), 0.5));
-
     col += 0.3 * vec3(1.0, 0.7, 0.4) * pow(sun, 8.0) * (1.0 - uStormAmount);
     col += 0.5 * vec3(1.0, 0.9, 0.7) * pow(sun, 500.0) * (1.0 - uStormAmount);
-
-    // Procedural Clouds
     if (rd.y > 0.0) {
         vec2 uv = rd.xz / (rd.y + 0.001);
         float cl = 0.0;
@@ -312,19 +299,19 @@ vec3 GetSkyColor(vec3 rd, vec3 sunDir) {
         vec3 cloudCol = mix(vec3(1.0), vec3(0.2, 0.2, 0.25), uStormAmount);
         col = mix(col, cloudCol, cloudMask * rd.y);
     }
-
-    // Lightning Bolt in Sky
     if (uStormAmount > 0.1) {
-        float flashTime = iTime * 2.0;
-        float flash = step(0.98, fract(sin(floor(flashTime) * 456.789)));
+        float flashTime = iTime * 3.0;
+        float flash = step(0.96, hash(vec3(floor(flashTime), 0.0, 0.0)));
         if (flash > 0.5) {
             float seed = floor(flashTime);
-            vec2 boltPos = (vec2(fract(sin(seed*12.3)), fract(cos(seed*45.6))) - 0.5) * 50.0;
-            float d = length(rd.xz * 20.0 - boltPos);
-            col += vec3(0.8, 0.9, 1.0) * exp(-d * 2.0) * rd.y;
+            vec2 boltPos = (vec2(hash(vec3(seed, 1.0, 2.0)), hash(vec3(seed, 3.0, 4.0))) - 0.5) * 40.0;
+            float d = length(rd.xz * 10.0 - boltPos);
+            col += vec3(0.7, 0.85, 1.0) * exp(-d * 0.5) * smoothstep(0.0, 0.2, rd.y);
+
+            float bolt = smoothstep(0.05, 0.0, abs(rd.x * 15.0 - boltPos.x));
+            col += vec3(0.9, 0.95, 1.0) * bolt * flash * smoothstep(0.0, 0.3, rd.y);
         }
     }
-
     return col;
 }
 
@@ -335,80 +322,50 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
         vec3 n = GetNormal(p);
         float detail = triPlanarNoise(p, n);
         vec2 res = GetDist(p);
-
-        // Advanced Multi-layered Biome Coloring
-        vec3 tCol;
+        vec3 tCol = vec3(0.5);
         float slope = 1.0 - n.y;
         float h = p.y;
         float isSnow = 0.0;
-
-        if (res.y < 0.5) { // Terrain
-            // Base Layers
+        if (res.y < 0.5) {
             vec3 sand = vec3(0.8, 0.7, 0.5);
             vec3 grass = vec3(0.2, 0.4, 0.1);
             vec3 forest = vec3(0.05, 0.15, 0.05);
             vec3 rock = vec3(0.3, 0.28, 0.25);
             vec3 snowCol = uSnowColor;
-
-            // Height-based blending
-            float beachMask = smoothstep(uWaterLevel - 0.2, uWaterLevel + 0.5, h);
             float grassMask = smoothstep(uWaterLevel + 0.2, uWaterLevel + 2.0, h);
             float forestMask = smoothstep(uWaterLevel + 3.0, uWaterLevel + 8.0, h);
             float rockMask = smoothstep(uTerrainHeight * 0.5, uTerrainHeight * 0.8, h);
             float snowMask = smoothstep(uTerrainHeight * 0.7, uTerrainHeight * 0.9, h);
-
             tCol = mix(sand, grass, grassMask);
             tCol = mix(tCol, forest, forestMask);
-
-            // Slope-based transitions
             float slopeRock = smoothstep(0.3, 0.6, slope + detail * 0.1);
             tCol = mix(tCol, rock, slopeRock);
-
-            // High altitude rock/snow
             tCol = mix(tCol, rock, rockMask);
-
-            // Snow accumulation (only on flatter areas at peak)
             isSnow = snowMask * (1.0 - smoothstep(0.4, 0.8, slope));
             tCol = mix(tCol, snowCol * (0.9 + 0.1 * detail), isSnow);
-
         } else if (res.y > 0.5 && res.y < 1.5) {
-            tCol = vec3(0.35, 0.3, 0.25); // Rocks/User Objects
+            tCol = vec3(0.35, 0.3, 0.25);
         } else if (res.y > 1.5 && res.y < 2.5) {
-            tCol = mix(vec3(0.05, 0.1, 0.02), vec3(0.2, 0.1, 0.05), smoothstep(0.0, 0.2, p.y - Terrain(p))); // Trees
+            tCol = mix(vec3(0.05, 0.1, 0.02), vec3(0.2, 0.1, 0.05), smoothstep(0.0, 0.2, p.y - Terrain(p)));
         } else if (res.y > 2.5) {
-            tCol = vec3(0.5, 0.2, 0.8) * (0.5 + 0.5 * sin(iTime + p.y)); // Special objects
+            tCol = vec3(0.5, 0.2, 0.8) * (0.5 + 0.5 * sin(iTime + p.y));
         }
-
         tCol *= (0.8 + 0.4 * detail * uTerrainDetail);
-
         float dif = clamp(dot(n, sunDir), 0.0, 1.0);
         float shadow = GetShadow(p + n * SURF_DIST * 2.0, sunDir, 0.1, 30.0);
         float ao = GetAO(p, n);
-
-        // Hemisphere lighting (Sky color from above, Ground color from below)
         vec3 skyLight = mix(vec3(0.05, 0.1, 0.2), uSkyColor, n.y * 0.5 + 0.5);
         float amb = 0.5 + 0.5 * n.y;
-
-        // Back light to fill in silhouettes
         float bac = clamp(dot(n, normalize(vec3(-sunDir.x, 0.0, -sunDir.z))), 0.0, 1.0) * 0.2;
-
-        // Combine lighting components
         vec3 lin = vec3(0.0);
-
-        // Sun light (reduced in storm)
         lin += dif * shadow * vec3(1.2, 1.1, 1.0) * (1.0 - uStormAmount);
-
-        // Sky/Ambient
         lin += skyLight * ao * 0.5;
         lin += amb * vec3(0.1, 0.08, 0.05) * ao;
         lin += bac * ao * 0.1;
-
-        // Lightning Flash on Terrain
         if (uStormAmount > 0.1) {
-            float flash = step(0.98, fract(sin(floor(iTime * 2.0) * 456.789)));
-            lin += flash * vec3(1.0, 1.1, 1.5) * ao * 2.0;
+            float flash = step(0.96, hash(vec3(floor(iTime * 3.0), 0.0, 0.0)));
+            lin += flash * vec3(1.0, 1.1, 1.5) * ao * 3.0;
         }
-
         vec3 col = tCol * lin;
         if (isSnow > 0.1 && res.y < 0.5) {
             vec3 ref = reflect(rd, n);
@@ -424,21 +381,17 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
 void main() {
     vec2 uv = (vUv - 0.5) * 2.0;
     uv.x *= iResolution.x / iResolution.y;
-
     vec3 ro = iCameraPos;
     vec3 rd = normalize((iCameraMatrix * vec4(uv.x, uv.y, -1.5, 0.0)).xyz);
-
-
     vec3 sunDir = normalize(uSunDir);
     float dTerrain = RayMarch(ro, rd);
     float dWater = (uWaterLevel - ro.y) / rd.y;
     vec3 col;
     if(dWater > 0.0 && (dWater < dTerrain || dTerrain >= MAX_DIST)) {
         vec3 p = ro + rd * dWater;
-        float wave = fbm(vec3(p.xz * 0.5, iTime * 0.2), 4) * 0.1;
-        vec3 n = normalize(vec3(0, 1, 0)); // simplified normal for brevity
+        vec3 n = normalize(vec3(0, 1, 0));
         vec3 refRD = reflect(rd, n);
-        vec3 refCol = Render(p + n * SURF_DIST * 2.0, refRD, sunDir);
+        vec3 refCol = GetSkyColor(refRD, sunDir);
         float fresnel = pow(clamp(1.0 + dot(rd, n), 0.0, 1.0), 5.0);
         col = mix(uWaterColor, refCol, 0.1 + 0.9 * fresnel);
         col = mix(col, uSkyColor, 1.0 - exp(-dWater * uFogDensity));
@@ -451,33 +404,31 @@ void main() {
 
 class BryceApp {
     constructor() {
+        console.log("BryceApp: Initializing");
         this.scene = new THREE.Scene();
-        this.quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        this.quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1, 1);
         this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.camera.position.set(0, 15, 30);
         this.camera.lookAt(0, 0, 0);
 
-        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.toneMapping = THREE.ReinhardToneMapping;
-        document.getElementById('app')?.appendChild(this.renderer.domElement);
+        this.renderer.setClearColor(0x000000);
+        const container = document.getElementById('app');
+        if (container) {
+            container.appendChild(this.renderer.domElement);
+        } else {
+            document.body.appendChild(this.renderer.domElement);
+        }
 
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.05;
-        this.controls.screenSpacePanning = false;
-        this.controls.minDistance = 5;
-        this.controls.maxDistance = 200;
-        this.controls.maxPolarAngle = Math.PI / 2 - 0.05; // Prevent going below ground
 
         this.composer = new EffectComposer(this.renderer);
-        const renderPass = new RenderPass(this.scene, this.quadCamera);
-        this.composer.addPass(renderPass);
-
-        this.bloomPass = new UnrealBloomPass(
-            new THREE.Vector2(window.innerWidth, window.innerHeight),
-            1.5, 0.4, 0.85
-        );
+        this.composer.addPass(new RenderPass(this.scene, this.quadCamera));
+        this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.5, 0.4, 0.85);
         this.composer.addPass(this.bloomPass);
 
         this.startTime = Date.now();
@@ -509,41 +460,37 @@ class BryceApp {
                 uStormAmount: { value: 0.0 }
             }
         });
+
         const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.material);
         this.scene.add(quad);
-        this.gui = new GUI();
-        this.setupGUI();
+
+        try {
+            this.gui = new GUI();
+            this.setupGUI();
+        } catch(e) {
+            console.error("GUI failed to load", e);
+        }
+
         window.addEventListener('resize', this.onWindowResize.bind(this));
         this.renderer.domElement.addEventListener('click', this.onMouseClick.bind(this));
+
+        console.log("BryceApp: Setup complete, starting animation");
         this.animate();
     }
 
     onMouseClick(event) {
         if (this.material.uniforms.uNumUserObjects.value >= 8) return;
-
-        // Mouse NDC
-        const mouse = new THREE.Vector2(
-            (event.clientX / window.innerWidth) * 2 - 1,
-            -(event.clientY / window.innerHeight) * 2 + 1
-        );
-
+        const mouse = new THREE.Vector2((event.clientX / window.innerWidth) * 2 - 1, -(event.clientY / window.innerHeight) * 2 + 1);
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, this.camera);
         const ray = raycaster.ray;
-
-        // Intersect with estimated terrain plane
         const targetY = this.material.uniforms.uTerrainHeight.value * 0.4;
         let t = (targetY - ray.origin.y) / ray.direction.y;
-
-        if (t < 0 || t > 200) t = 20; // Fallback
-
+        if (t < 0 || t > 200) t = 20;
         const pos = new THREE.Vector3().copy(ray.origin).addScaledVector(ray.direction, t);
-
         const idx = this.material.uniforms.uNumUserObjects.value;
         this.material.uniforms.uUserObjects.value[idx].copy(pos);
         this.material.uniforms.uNumUserObjects.value++;
-
-        // Ensure Three.js notices the array change
         this.material.uniforms.uUserObjects.value = [...this.material.uniforms.uUserObjects.value];
     }
 
@@ -551,12 +498,9 @@ class BryceApp {
         const terrainFolder = this.gui.addFolder('Terrain');
         terrainFolder.add(this.material.uniforms.uTerrainScale, 'value', 0.01, 2.0).name('Scale');
         terrainFolder.add(this.material.uniforms.uTerrainHeight, 'value', 0.0, 40.0).name('Height');
-        terrainFolder.add(this.material.uniforms.uOctaves, 'value', 1, 12, 1).name('Octaves');
+        terrainFolder.add(this.material.uniforms.uOctaves, 'value', 1, 8, 1).name('Octaves');
         terrainFolder.add(this.material.uniforms.uTerrainDetail, 'value', 0, 2.0).name('Detail');
         terrainFolder.add(this.material.uniforms.uSeed, 'value', 0, 100).name('Seed').listen();
-        const editorFolder = this.gui.addFolder('Editor');
-        editorFolder.add({ clear: () => { this.material.uniforms.uNumUserObjects.value = 0; } }, 'clear').name('Clear Placed Objects');
-        editorFolder.add({ info: 'Click scene to place rocks' }, 'info').name('Usage:').disable();
 
         const envFolder = this.gui.addFolder('Environment');
         envFolder.add(this.material.uniforms.uSunDir.value, 'x', -1, 1).name('Sun X');
@@ -574,7 +518,33 @@ class BryceApp {
         bloomFolder.add(this.bloomPass, 'threshold', 0, 1).name('Threshold');
 
         const colorFolder = this.gui.addFolder('Colors');
-        const colorParams = { sky: '#80b3ff', terrain: '#664d33', snow: '#e6e6e6', water: '#1a4d80', presets: 'Alpine' };
+        const colorParams = {
+            sky: '#80b3ff',
+            terrain: '#664d33',
+            snow: '#e6e6e6',
+            water: '#1a4d80',
+            presets: 'Alpine',
+            randomize: () => {
+                this.material.uniforms.uSeed.value = Math.random() * 100;
+            },
+            resetCam: () => {
+                this.camera.position.set(0, 15, 30);
+                this.controls.target.set(0, 0, 0);
+                this.controls.update();
+            },
+            screenshot: () => {
+                this.composer.render();
+                const link = document.createElement('a');
+                link.download = 'bryce-render.png';
+                link.href = this.renderer.domElement.toDataURL('image/png');
+                link.click();
+            }
+        };
+
+        colorFolder.add(colorParams, 'randomize').name('Randomize Seed');
+        colorFolder.add(colorParams, 'resetCam').name('Reset Camera');
+        colorFolder.add(colorParams, 'screenshot').name('Capture Render');
+
         const presets = {
             'Alpine': { sky: '#80b3ff', terrain: '#664d33', snow: '#e6e6e6', water: '#1a4d80' },
             'Mars': { sky: '#ff9966', terrain: '#802b00', snow: '#ffccb3', water: '#4d1a00' },
@@ -587,15 +557,7 @@ class BryceApp {
             this.material.uniforms.uTerrainColor.value.set(p.terrain);
             this.material.uniforms.uSnowColor.value.set(p.snow);
             this.material.uniforms.uWaterColor.value.set(p.water);
-
-            for (const folder of this.gui.folders) {
-                for (const controller of folder.controllers) {
-                    controller.updateDisplay();
-                }
-            }
-            for (const controller of this.gui.controllers) {
-                controller.updateDisplay();
-            }
+            this.gui.folders.forEach(f => f.controllers.forEach(c => c.updateDisplay()));
         });
     }
 
@@ -608,8 +570,8 @@ class BryceApp {
     animate() {
         requestAnimationFrame(this.animate.bind(this));
         this.material.uniforms.iTime.value = (Date.now() - this.startTime) / 1000;
-
         this.controls.update();
+        this.camera.updateMatrixWorld();
         this.material.uniforms.iCameraPos.value.copy(this.camera.position);
         this.material.uniforms.iCameraMatrix.value.copy(this.camera.matrixWorld);
 
