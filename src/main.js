@@ -40,6 +40,7 @@ uniform float uSeed;
 uniform float uFractalAmount;
 uniform float uMonolithAmount;
 uniform float uStormAmount;
+uniform float uExposure;
 uniform vec3 uUserObjects[8];
 uniform float uNumUserObjects;
 
@@ -335,13 +336,13 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
             float grassMask = smoothstep(uWaterLevel + 0.2, uWaterLevel + 2.0, h);
             float forestMask = smoothstep(uWaterLevel + 3.0, uWaterLevel + 8.0, h);
             float rockMask = smoothstep(uTerrainHeight * 0.5, uTerrainHeight * 0.8, h);
-            float snowMask = smoothstep(uTerrainHeight * 0.7, uTerrainHeight * 0.9, h);
+            float snowMask = smoothstep(uTerrainHeight * 0.82, uTerrainHeight * 1.05, h);
             tCol = mix(sand, grass, grassMask);
             tCol = mix(tCol, forest, forestMask);
             float slopeRock = smoothstep(0.3, 0.6, slope + detail * 0.1);
             tCol = mix(tCol, rock, slopeRock);
             tCol = mix(tCol, rock, rockMask);
-            isSnow = snowMask * (1.0 - smoothstep(0.4, 0.8, slope));
+            isSnow = snowMask * (1.0 - smoothstep(0.4, 0.8, slope)) * smoothstep(0.25, 0.6, detail);
             tCol = mix(tCol, snowCol * (0.9 + 0.1 * detail), isSnow);
         } else if (res.y > 0.5 && res.y < 1.5) {
             tCol = vec3(0.35, 0.3, 0.25);
@@ -359,7 +360,7 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
         float bac = clamp(dot(n, normalize(vec3(-sunDir.x, 0.0, -sunDir.z))), 0.0, 1.0) * 0.2;
         vec3 lin = vec3(0.0);
         lin += dif * shadow * vec3(1.2, 1.1, 1.0) * (1.0 - uStormAmount);
-        lin += skyLight * ao * 0.5;
+        lin += skyLight * ao * 0.35;
         lin += amb * vec3(0.1, 0.08, 0.05) * ao;
         lin += bac * ao * 0.1;
         if (uStormAmount > 0.1) {
@@ -376,6 +377,15 @@ vec3 Render(vec3 ro, vec3 rd, vec3 sunDir) {
         return mix(col, uSkyColor, fogAmount);
     }
     return GetSkyColor(rd, sunDir);
+}
+
+vec3 acesFilm(vec3 x) {
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
 void main() {
@@ -398,21 +408,29 @@ void main() {
     } else {
         col = Render(ro, rd, sunDir);
     }
-    gl_FragColor = vec4(pow(col, vec3(0.4545)), 1.0);
+    gl_FragColor = vec4(pow(acesFilm(col * uExposure), vec3(0.4545)), 1.0);
 }
 `;
+
+// Some embedded/headless hosts report a 0x0 window before layout settles. Fall back to a
+// sane default so the renderer never builds a zero-sized (blank, unexportable) canvas.
+function viewportSize() {
+    return { w: window.innerWidth || 1280, h: window.innerHeight || 720 };
+}
+
 
 class BryceApp {
     constructor() {
         console.log("BryceApp: Initializing");
+        const vp = viewportSize();
         this.scene = new THREE.Scene();
         this.quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1, 1);
-        this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        this.camera = new THREE.PerspectiveCamera(45, viewportSize().w / viewportSize().h, 0.1, 1000);
         this.camera.position.set(0, 15, 30);
         this.camera.lookAt(0, 0, 0);
 
         this.renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setSize(vp.w, vp.h);
         this.renderer.toneMapping = THREE.ReinhardToneMapping;
         this.renderer.setClearColor(0x000000);
         const container = document.getElementById('app');
@@ -428,7 +446,7 @@ class BryceApp {
 
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.quadCamera));
-        this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.5, 0.4, 0.85);
+        this.bloomPass = new UnrealBloomPass(new THREE.Vector2(vp.w, vp.h), 0.3, 0.4, 0.9);
         this.composer.addPass(this.bloomPass);
 
         this.startTime = Date.now();
@@ -437,14 +455,14 @@ class BryceApp {
             fragmentShader,
             uniforms: {
                 iTime: { value: 0 },
-                iResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                iResolution: { value: new THREE.Vector2(vp.w, vp.h) },
                 iCameraPos: { value: new THREE.Vector3() },
                 iCameraMatrix: { value: new THREE.Matrix4() },
                 uTerrainScale: { value: 0.15 },
                 uTerrainHeight: { value: 8.0 },
                 uOctaves: { value: 8 },
                 uSunDir: { value: new THREE.Vector3(1, 0.5, 0.5) },
-                uFogDensity: { value: 0.015 },
+                uFogDensity: { value: 0.007 },
                 uCloudDensity: { value: 0.5 },
                 uSkyColor: { value: new THREE.Color(0.5, 0.7, 1.0) },
                 uTerrainColor: { value: new THREE.Color(0.4, 0.3, 0.2) },
@@ -457,7 +475,8 @@ class BryceApp {
                 uMonolithAmount: { value: 0.0 },
                 uUserObjects: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
                 uNumUserObjects: { value: 0 },
-                uStormAmount: { value: 0.0 }
+                uStormAmount: { value: 0.0 },
+                uExposure: { value: 1.1 }
             }
         });
 
@@ -473,10 +492,31 @@ class BryceApp {
 
         window.addEventListener('resize', this.onWindowResize.bind(this));
         this.renderer.domElement.addEventListener('click', this.onMouseClick.bind(this));
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'p' || e.key === 'P') this.downloadImage();
+        });
+        // Expose for programmatic snapshots / verification (e.g. window.bryceApp.captureDataURL()).
+        window.bryceApp = this;
 
         console.log("BryceApp: Setup complete, starting animation");
         this.animate();
     }
+
+    // Render one fresh frame and return it as a PNG data URL. preserveDrawingBuffer:true
+    // on the renderer keeps the back buffer readable, so this works headlessly too.
+    captureDataURL() {
+        this.composer.render();
+        return this.renderer.domElement.toDataURL('image/png');
+    }
+
+    // Trigger a browser download of the current render.
+    downloadImage(filename = 'bryce-render.png') {
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = this.captureDataURL();
+        link.click();
+    }
+
 
     onMouseClick(event) {
         if (this.material.uniforms.uNumUserObjects.value >= 8) return;
@@ -511,6 +551,7 @@ class BryceApp {
         envFolder.add(this.material.uniforms.uFractalAmount, 'value', 0, 1).name('Fractal');
         envFolder.add(this.material.uniforms.uMonolithAmount, 'value', 0, 1).name('Monoliths');
         envFolder.add(this.material.uniforms.uStormAmount, 'value', 0, 1).name('Storm Intensity');
+        envFolder.add(this.material.uniforms.uExposure, 'value', 0.1, 3.0).name('Exposure');
 
         const bloomFolder = this.gui.addFolder('Bloom');
         bloomFolder.add(this.bloomPass, 'strength', 0, 3).name('Strength');
@@ -532,13 +573,7 @@ class BryceApp {
                 this.controls.target.set(0, 0, 0);
                 this.controls.update();
             },
-            screenshot: () => {
-                this.composer.render();
-                const link = document.createElement('a');
-                link.download = 'bryce-render.png';
-                link.href = this.renderer.domElement.toDataURL('image/png');
-                link.click();
-            }
+            screenshot: () => this.downloadImage()
         };
 
         colorFolder.add(colorParams, 'randomize').name('Randomize Seed');
@@ -562,9 +597,12 @@ class BryceApp {
     }
 
     onWindowResize() {
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.composer.setSize(window.innerWidth, window.innerHeight);
-        this.material.uniforms.iResolution.value.set(window.innerWidth, window.innerHeight);
+        const vp = viewportSize();
+        this.camera.aspect = vp.w / vp.h;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(vp.w, vp.h);
+        this.composer.setSize(vp.w, vp.h);
+        this.material.uniforms.iResolution.value.set(vp.w, vp.h);
     }
 
     animate() {
