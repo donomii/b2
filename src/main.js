@@ -4,6 +4,22 @@ import { EffectComposer } from 'https://esm.sh/three@0.160.0/examples/jsm/postpr
 import { RenderPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js';
 import GUI from 'https://esm.sh/lil-gui@0.19.0';
+import {
+    LANDSCAPE_STORAGE_KEY,
+    LANDSCAPE_VERSION,
+    MAX_USER_ROCKS,
+    USER_ROCK_SURFACE_OFFSET,
+    screenRay,
+    terrainHit,
+    validateLandscape
+} from './landscape.js';
+
+const COLOR_PRESETS = {
+    Alpine: { sky: '#80b3ff', terrain: '#664d33', snow: '#e6e6e6', water: '#1a4d80' },
+    Mars: { sky: '#ff9966', terrain: '#802b00', snow: '#ffccb3', water: '#4d1a00' },
+    Arctic: { sky: '#e6f2ff', terrain: '#b3ccd9', snow: '#ffffff', water: '#80b3cc' },
+    Tropical: { sky: '#00ccff', terrain: '#1a4d00', snow: '#ffffff', water: '#00ffcc' }
+};
 
 console.log("BryceApp: Modules loaded");
 
@@ -455,22 +471,34 @@ class BryceApp {
                 uSeed: { value: Math.random() * 100 },
                 uFractalAmount: { value: 0.0 },
                 uMonolithAmount: { value: 0.0 },
-                uUserObjects: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
+                uUserObjects: { value: Array.from({ length: MAX_USER_ROCKS }, () => new THREE.Vector3()) },
                 uNumUserObjects: { value: 0 },
                 uStormAmount: { value: 0.0 }
             }
         });
-
+        this.colorParams = {
+            preset: 'Custom',
+            sky: `#${this.material.uniforms.uSkyColor.value.getHexString()}`,
+            terrain: `#${this.material.uniforms.uTerrainColor.value.getHexString()}`,
+            snow: `#${this.material.uniforms.uSnowColor.value.getHexString()}`,
+            water: `#${this.material.uniforms.uWaterColor.value.getHexString()}`
+        };
+        this.colorParams.preset = this.colorPresetName();
+        this.editorReadouts = {
+            usage: 'Click visible terrain to place a rock.',
+            rocks: `0 / ${MAX_USER_ROCKS} rocks placed.`,
+            storage: 'No browser autosave found.'
+        };
+        this.restoreLandscape();
         const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.material);
         this.scene.add(quad);
-
         try {
             this.gui = new GUI();
             this.setupGUI();
-        } catch(e) {
-            console.error("GUI failed to load", e);
+            this.updateRockReadout();
+        } catch (error) {
+            console.error('GUI failed to load', error);
         }
-
         window.addEventListener('resize', this.onWindowResize.bind(this));
         this.renderer.domElement.addEventListener('click', this.onMouseClick.bind(this));
 
@@ -478,87 +506,334 @@ class BryceApp {
         this.animate();
     }
 
+    vectorValues(vector) {
+        return [vector.x, vector.y, vector.z];
+    }
+
+    terrainSettings() {
+        return {
+            scale: this.material.uniforms.uTerrainScale.value,
+            height: this.material.uniforms.uTerrainHeight.value,
+            seed: this.material.uniforms.uSeed.value
+        };
+    }
+
+    landscapeData() {
+        const uniforms = this.material.uniforms;
+        const rockCount = uniforms.uNumUserObjects.value;
+        return validateLandscape({
+            version: LANDSCAPE_VERSION,
+            camera: {
+                position: this.vectorValues(this.camera.position),
+                lookAt: this.vectorValues(this.controls.target)
+            },
+            terrain: {
+                scale: uniforms.uTerrainScale.value,
+                height: uniforms.uTerrainHeight.value,
+                octaves: uniforms.uOctaves.value,
+                detail: uniforms.uTerrainDetail.value,
+                seed: uniforms.uSeed.value
+            },
+            environment: {
+                sun: this.vectorValues(uniforms.uSunDir.value),
+                fog: uniforms.uFogDensity.value,
+                clouds: uniforms.uCloudDensity.value,
+                waterLevel: uniforms.uWaterLevel.value,
+                fractal: uniforms.uFractalAmount.value,
+                monolith: uniforms.uMonolithAmount.value,
+                storm: uniforms.uStormAmount.value
+            },
+            bloom: {
+                strength: this.bloomPass.strength,
+                radius: this.bloomPass.radius,
+                threshold: this.bloomPass.threshold
+            },
+            colors: {
+                sky: `#${uniforms.uSkyColor.value.getHexString()}`,
+                terrain: `#${uniforms.uTerrainColor.value.getHexString()}`,
+                snow: `#${uniforms.uSnowColor.value.getHexString()}`,
+                water: `#${uniforms.uWaterColor.value.getHexString()}`
+            },
+            rocks: uniforms.uUserObjects.value.slice(0, rockCount).map((rock) => this.vectorValues(rock))
+        });
+    }
+
+    applyLandscape(value) {
+        const landscape = validateLandscape(value);
+        const uniforms = this.material.uniforms;
+        this.camera.position.fromArray(landscape.camera.position);
+        this.controls.target.fromArray(landscape.camera.lookAt);
+        this.controls.update();
+        uniforms.uTerrainScale.value = landscape.terrain.scale;
+        uniforms.uTerrainHeight.value = landscape.terrain.height;
+        uniforms.uOctaves.value = landscape.terrain.octaves;
+        uniforms.uTerrainDetail.value = landscape.terrain.detail;
+        uniforms.uSeed.value = landscape.terrain.seed;
+        uniforms.uSunDir.value.fromArray(landscape.environment.sun);
+        uniforms.uFogDensity.value = landscape.environment.fog;
+        uniforms.uCloudDensity.value = landscape.environment.clouds;
+        uniforms.uWaterLevel.value = landscape.environment.waterLevel;
+        uniforms.uFractalAmount.value = landscape.environment.fractal;
+        uniforms.uMonolithAmount.value = landscape.environment.monolith;
+        uniforms.uStormAmount.value = landscape.environment.storm;
+        this.bloomPass.strength = landscape.bloom.strength;
+        this.bloomPass.radius = landscape.bloom.radius;
+        this.bloomPass.threshold = landscape.bloom.threshold;
+        this.colorParams.sky = landscape.colors.sky;
+        this.colorParams.terrain = landscape.colors.terrain;
+        this.colorParams.snow = landscape.colors.snow;
+        this.colorParams.water = landscape.colors.water;
+        uniforms.uSkyColor.value.set(landscape.colors.sky);
+        uniforms.uTerrainColor.value.set(landscape.colors.terrain);
+        uniforms.uSnowColor.value.set(landscape.colors.snow);
+        uniforms.uWaterColor.value.set(landscape.colors.water);
+        for (const rock of uniforms.uUserObjects.value) rock.set(0, 0, 0);
+        landscape.rocks.forEach((rock, index) => uniforms.uUserObjects.value[index].fromArray(rock));
+        uniforms.uNumUserObjects.value = landscape.rocks.length;
+        this.colorParams.preset = this.colorPresetName();
+        this.updateRockReadout();
+        return landscape;
+    }
+
+    colorPresetName() {
+        const match = Object.entries(COLOR_PRESETS).find(([_name, colors]) =>
+            colors.sky === this.colorParams.sky
+            && colors.terrain === this.colorParams.terrain
+            && colors.snow === this.colorParams.snow
+            && colors.water === this.colorParams.water
+        );
+        return match ? match[0] : 'Custom';
+    }
+
+    setStorageStatus(message) {
+        this.editorReadouts.storage = message;
+        this.storageStatusController?.updateDisplay();
+    }
+
+    updateRockReadout() {
+        const count = this.material.uniforms.uNumUserObjects.value;
+        this.editorReadouts.rocks = `${count} / ${MAX_USER_ROCKS} rocks placed.`;
+        this.rockCountController?.updateDisplay();
+    }
+
+    refreshGui() {
+        const refreshFolder = (folder) => {
+            for (const controller of folder.controllers || []) controller.updateDisplay();
+            for (const child of folder.folders || []) refreshFolder(child);
+        };
+        refreshFolder(this.gui);
+    }
+
+    saveLandscape(message = 'Saved the current landscape in this browser.') {
+        try {
+            window.localStorage.setItem(LANDSCAPE_STORAGE_KEY, JSON.stringify(this.landscapeData()));
+            this.setStorageStatus(message);
+            return true;
+        } catch (error) {
+            this.setStorageStatus(`Could not save the landscape: ${error?.message || error}`);
+            return false;
+        }
+    }
+
+    restoreLandscape() {
+        let saved;
+        try {
+            saved = window.localStorage.getItem(LANDSCAPE_STORAGE_KEY);
+        } catch (error) {
+            this.setStorageStatus(`Could not read browser storage: ${error?.message || error}`);
+            return false;
+        }
+        if (!saved) return false;
+        try {
+            this.applyLandscape(JSON.parse(saved));
+            this.setStorageStatus('Restored the browser autosave.');
+            return true;
+        } catch (error) {
+            this.setStorageStatus(`Saved landscape is invalid and was not loaded: ${error?.message || error}`);
+            return false;
+        }
+    }
+
+    clearRocks() {
+        this.material.uniforms.uNumUserObjects.value = 0;
+        for (const rock of this.material.uniforms.uUserObjects.value) rock.set(0, 0, 0);
+        this.updateRockReadout();
+        this.saveLandscape('Cleared all placed rocks and saved the landscape.');
+    }
+
+    clearSavedLandscape() {
+        try {
+            window.localStorage.removeItem(LANDSCAPE_STORAGE_KEY);
+            this.setStorageStatus('Removed the browser autosave; the current landscape is unchanged.');
+        } catch (error) {
+            this.setStorageStatus(`Could not remove the browser autosave: ${error?.message || error}`);
+        }
+    }
+
+    exportLandscape() {
+        try {
+            const landscape = this.landscapeData();
+            const blob = new Blob([`${JSON.stringify(landscape, null, 2)}\n`], { type: 'application/json' });
+            const link = document.createElement('a');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const downloadUrl = URL.createObjectURL(blob);
+            link.href = downloadUrl;
+            link.download = `b2-landscape-${timestamp}.json`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
+            this.saveLandscape('Exported the landscape as JSON and refreshed the browser autosave.');
+        } catch (error) {
+            this.setStorageStatus(`Could not export the landscape: ${error?.message || error}`);
+        }
+    }
+
+    chooseLandscapeFile() {
+        if (!this.importInput) {
+            this.importInput = document.createElement('input');
+            this.importInput.type = 'file';
+            this.importInput.accept = 'application/json,.json';
+            this.importInput.addEventListener('change', () => this.importSelectedLandscape());
+        }
+        this.importInput.click();
+    }
+
+    async importSelectedLandscape() {
+        const file = this.importInput?.files?.[0];
+        if (!file) return;
+        try {
+            this.applyLandscape(JSON.parse(await file.text()));
+            this.refreshGui();
+            this.saveLandscape(`Imported ${file.name} and saved it in this browser.`);
+        } catch (error) {
+            this.setStorageStatus(`Could not import ${file.name}: ${error?.message || error}`);
+        } finally {
+            this.importInput.value = '';
+        }
+    }
+
+    explain(controller, explanation, autosave = false) {
+        controller.domElement.title = explanation;
+        if (autosave) controller.onFinishChange(() => this.saveLandscape('Autosaved the current landscape in this browser.'));
+        return controller;
+    }
+
     onMouseClick(event) {
-        if (this.material.uniforms.uNumUserObjects.value >= 8) return;
-        const mouse = new THREE.Vector2((event.clientX / window.innerWidth) * 2 - 1, -(event.clientY / window.innerHeight) * 2 + 1);
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(mouse, this.camera);
-        const ray = raycaster.ray;
-        const targetY = this.material.uniforms.uTerrainHeight.value * 0.4;
-        let t = (targetY - ray.origin.y) / ray.direction.y;
-        if (t < 0 || t > 200) t = 20;
-        const pos = new THREE.Vector3().copy(ray.origin).addScaledVector(ray.direction, t);
+        if (this.material.uniforms.uNumUserObjects.value >= MAX_USER_ROCKS) {
+            this.setStorageStatus(`Rock limit reached: use Clear Rocks before placing more than ${MAX_USER_ROCKS}.`);
+            return;
+        }
+        const bounds = this.renderer.domElement.getBoundingClientRect();
+        const cameraPosition = this.vectorValues(this.camera.position);
+        const cameraLookAt = this.vectorValues(this.controls.target);
+        const direction = screenRay(event.clientX, event.clientY, bounds, cameraPosition, cameraLookAt);
+        const hit = terrainHit(cameraPosition, direction, this.terrainSettings());
+        if (!hit) {
+            this.setStorageStatus('That click did not intersect terrain; click a visible ground surface.');
+            return;
+        }
         const idx = this.material.uniforms.uNumUserObjects.value;
-        this.material.uniforms.uUserObjects.value[idx].copy(pos);
-        this.material.uniforms.uNumUserObjects.value++;
-        this.material.uniforms.uUserObjects.value = [...this.material.uniforms.uUserObjects.value];
+        this.material.uniforms.uUserObjects.value[idx].set(hit[0], hit[1] + USER_ROCK_SURFACE_OFFSET, hit[2]);
+        this.material.uniforms.uNumUserObjects.value = idx + 1;
+        this.updateRockReadout();
+        this.saveLandscape(`Placed rock ${idx + 1} at terrain point (${hit.map((value) => value.toFixed(2)).join(', ')}).`);
     }
 
     setupGUI() {
+        const camFolder = this.gui.addFolder('Camera');
+        this.explain(camFolder.add(this.camera.position, 'x', -50, 50).name('Pos X'), 'Moves the camera left or right in world space.', true);
+        this.explain(camFolder.add(this.camera.position, 'y', -50, 50).name('Pos Y'), 'Raises or lowers the camera in world space.', true);
+        this.explain(camFolder.add(this.camera.position, 'z', -50, 50).name('Pos Z'), 'Moves the camera forward or backward in world space.', true);
+
         const terrainFolder = this.gui.addFolder('Terrain');
-        terrainFolder.add(this.material.uniforms.uTerrainScale, 'value', 0.01, 2.0).name('Scale');
-        terrainFolder.add(this.material.uniforms.uTerrainHeight, 'value', 0.0, 40.0).name('Height');
-        terrainFolder.add(this.material.uniforms.uOctaves, 'value', 1, 8, 1).name('Octaves');
-        terrainFolder.add(this.material.uniforms.uTerrainDetail, 'value', 0, 2.0).name('Detail');
-        terrainFolder.add(this.material.uniforms.uSeed, 'value', 0, 100).name('Seed').listen();
+        this.explain(terrainFolder.add(this.material.uniforms.uTerrainScale, 'value', 0.01, 2.0).name('Scale'), 'Controls terrain feature frequency: low values make broad landforms; high values make tighter features.', true);
+        this.explain(terrainFolder.add(this.material.uniforms.uTerrainHeight, 'value', 0.0, 40.0).name('Height'), 'Sets the maximum vertical range of the generated terrain.', true);
+        this.explain(terrainFolder.add(this.material.uniforms.uOctaves, 'value', 1, 12, 1).name('Octaves'), 'Sets how many terrain noise detail layers are requested.', true);
+        this.explain(terrainFolder.add(this.material.uniforms.uTerrainDetail, 'value', 0, 2.0).name('Detail'), 'Controls the strength of small surface texture variation.', true);
+        this.explain(terrainFolder.add(this.material.uniforms.uSeed, 'value', 0, 100).name('Seed').listen(), 'Selects the repeatable terrain variation saved with the landscape.', true);
 
-        const envFolder = this.gui.addFolder('Environment');
-        envFolder.add(this.material.uniforms.uSunDir.value, 'x', -1, 1).name('Sun X');
-        envFolder.add(this.material.uniforms.uSunDir.value, 'y', -1, 1).name('Sun Y');
-        envFolder.add(this.material.uniforms.uSunDir.value, 'z', -1, 1).name('Sun Z');
-        envFolder.add(this.material.uniforms.uFogDensity, 'value', 0, 0.1).name('Fog');
-        envFolder.add(this.material.uniforms.uWaterLevel, 'value', -5, 5).name('Water Level');
-        envFolder.add(this.material.uniforms.uFractalAmount, 'value', 0, 1).name('Fractal');
-        envFolder.add(this.material.uniforms.uMonolithAmount, 'value', 0, 1).name('Monoliths');
-        envFolder.add(this.material.uniforms.uStormAmount, 'value', 0, 1).name('Storm Intensity');
-
-        const bloomFolder = this.gui.addFolder('Bloom');
-        bloomFolder.add(this.bloomPass, 'strength', 0, 3).name('Strength');
-        bloomFolder.add(this.bloomPass, 'radius', 0, 1).name('Radius');
-        bloomFolder.add(this.bloomPass, 'threshold', 0, 1).name('Threshold');
-
-        const colorFolder = this.gui.addFolder('Colors');
-        const colorParams = {
-            sky: '#80b3ff',
-            terrain: '#664d33',
-            snow: '#e6e6e6',
-            water: '#1a4d80',
-            presets: 'Alpine',
+        const editorFolder = this.gui.addFolder('Editor');
+        const editorActions = {
+            clear: () => this.clearRocks(),
+            save: () => this.saveLandscape(),
+            export: () => this.exportLandscape(),
+            import: () => this.chooseLandscapeFile(),
+            forget: () => this.clearSavedLandscape(),
             randomize: () => {
                 this.material.uniforms.uSeed.value = Math.random() * 100;
+                this.saveLandscape('Randomized the terrain seed and saved the landscape.');
             },
-            resetCam: () => {
+            resetCamera: () => {
                 this.camera.position.set(0, 15, 30);
                 this.controls.target.set(0, 0, 0);
                 this.controls.update();
+                this.refreshGui();
+                this.saveLandscape('Reset the camera and saved the landscape.');
             },
-            screenshot: () => {
+            capture: () => {
                 this.composer.render();
                 const link = document.createElement('a');
                 link.download = 'bryce-render.png';
                 link.href = this.renderer.domElement.toDataURL('image/png');
                 link.click();
+                this.setStorageStatus('Captured the current render as a PNG file.');
             }
         };
+        this.explain(editorFolder.add(editorActions, 'clear').name('Clear Rocks'), `Removes all ${MAX_USER_ROCKS} possible placed rocks and saves the change.`);
+        this.explain(editorFolder.add(editorActions, 'save').name('Save Now'), 'Stores all camera, terrain, environment, colour, bloom, and rock settings in this browser.');
+        this.explain(editorFolder.add(editorActions, 'export').name('Export JSON'), 'Downloads the complete designed landscape as a validated JSON file.');
+        this.explain(editorFolder.add(editorActions, 'import').name('Import JSON'), 'Loads a previously exported landscape after validating every field, then saves it in this browser.');
+        this.explain(editorFolder.add(editorActions, 'forget').name('Forget Autosave'), 'Removes the browser autosave without changing the landscape currently on screen.');
+        this.explain(editorFolder.add(editorActions, 'randomize').name('Randomize Seed'), 'Chooses a new terrain seed and saves the resulting landscape.');
+        this.explain(editorFolder.add(editorActions, 'resetCamera').name('Reset Camera'), 'Returns the camera to the default position and aim, then saves the landscape.');
+        this.explain(editorFolder.add(editorActions, 'capture').name('Capture Render'), 'Downloads the current rendered frame as a PNG file.');
+        this.explain(editorFolder.add(this.editorReadouts, 'usage').name('How to Place').disable(), 'Click visible ground in the rendered scene; the rock is anchored to the terrain point under the cursor.');
+        this.rockCountController = this.explain(editorFolder.add(this.editorReadouts, 'rocks').name('Rock Count').disable(), `Shows how many of the ${MAX_USER_ROCKS} available rock slots are occupied.`);
+        this.storageStatusController = this.explain(editorFolder.add(this.editorReadouts, 'storage').name('Save Status').disable(), 'Reports the result of the latest placement, save, import, export, or browser-storage action.');
 
-        colorFolder.add(colorParams, 'randomize').name('Randomize Seed');
-        colorFolder.add(colorParams, 'resetCam').name('Reset Camera');
-        colorFolder.add(colorParams, 'screenshot').name('Capture Render');
+        const envFolder = this.gui.addFolder('Environment');
+        this.explain(envFolder.add(this.material.uniforms.uSunDir.value, 'x', -1, 1).name('Sun X'), 'Aims sunlight along the east-west axis.', true);
+        this.explain(envFolder.add(this.material.uniforms.uSunDir.value, 'y', -1, 1).name('Sun Y'), 'Controls how high or low the sun points.', true);
+        this.explain(envFolder.add(this.material.uniforms.uSunDir.value, 'z', -1, 1).name('Sun Z'), 'Aims sunlight along the north-south axis.', true);
+        this.explain(envFolder.add(this.material.uniforms.uFogDensity, 'value', 0, 0.1).name('Fog'), 'Controls how quickly distant terrain fades into the sky.', true);
+        this.explain(envFolder.add(this.material.uniforms.uCloudDensity, 'value', 0, 1).name('Clouds'), 'Controls how much procedural cloud cover appears in the sky.', true);
+        this.explain(envFolder.add(this.material.uniforms.uWaterLevel, 'value', -5, 5).name('Water Level'), 'Raises or lowers the reflective water plane.', true);
+        this.explain(envFolder.add(this.material.uniforms.uFractalAmount, 'value', 0, 1).name('Fractal'), 'Fades the central Mandelbulb object in or out.', true);
+        this.explain(envFolder.add(this.material.uniforms.uMonolithAmount, 'value', 0, 1).name('Monoliths'), 'Controls how strongly the procedural monolith field appears.', true);
+        this.explain(envFolder.add(this.material.uniforms.uStormAmount, 'value', 0, 1).name('Storm Intensity'), 'Darkens the sky, thickens clouds, and adds storm lighting.', true);
 
-        const presets = {
-            'Alpine': { sky: '#80b3ff', terrain: '#664d33', snow: '#e6e6e6', water: '#1a4d80' },
-            'Mars': { sky: '#ff9966', terrain: '#802b00', snow: '#ffccb3', water: '#4d1a00' },
-            'Arctic': { sky: '#e6f2ff', terrain: '#b3ccd9', snow: '#ffffff', water: '#80b3cc' },
-            'Tropical': { sky: '#00ccff', terrain: '#1a4d00', snow: '#ffffff', water: '#00ffcc' }
-        };
-        colorFolder.add(colorParams, 'presets', Object.keys(presets)).onChange((v) => {
-            const p = presets[v];
-            this.material.uniforms.uSkyColor.value.set(p.sky);
-            this.material.uniforms.uTerrainColor.value.set(p.terrain);
-            this.material.uniforms.uSnowColor.value.set(p.snow);
-            this.material.uniforms.uWaterColor.value.set(p.water);
-            this.gui.folders.forEach(f => f.controllers.forEach(c => c.updateDisplay()));
+        const bloomFolder = this.gui.addFolder('Bloom');
+        this.explain(bloomFolder.add(this.bloomPass, 'strength', 0, 3).name('Strength'), 'Controls the intensity of glow around bright areas.', true);
+        this.explain(bloomFolder.add(this.bloomPass, 'radius', 0, 1).name('Radius'), 'Controls how far bloom spreads from bright areas.', true);
+        this.explain(bloomFolder.add(this.bloomPass, 'threshold', 0, 1).name('Threshold'), 'Sets the minimum brightness that produces bloom.', true);
+
+        const colorFolder = this.gui.addFolder('Colors');
+        const presetController = colorFolder.add(this.colorParams, 'preset', ['Custom', ...Object.keys(COLOR_PRESETS)]).name('Preset');
+        presetController.onChange((name) => {
+            const colors = COLOR_PRESETS[name];
+            if (!colors) return;
+            Object.assign(this.colorParams, colors);
+            this.material.uniforms.uSkyColor.value.set(colors.sky);
+            this.material.uniforms.uTerrainColor.value.set(colors.terrain);
+            this.material.uniforms.uSnowColor.value.set(colors.snow);
+            this.material.uniforms.uWaterColor.value.set(colors.water);
+            this.refreshGui();
         });
+        this.explain(presetController, 'Applies a coordinated set of sky, terrain, snow, and water colours; Custom preserves individual choices.', true);
+        const addColor = (property, uniform, name, explanation) => {
+            const controller = colorFolder.addColor(this.colorParams, property).name(name);
+            controller.onChange((value) => {
+                uniform.value.set(value);
+                this.colorParams.preset = this.colorPresetName();
+                presetController.updateDisplay();
+            });
+            this.explain(controller, explanation, true);
+        };
+        addColor('sky', this.material.uniforms.uSkyColor, 'Sky', 'Sets the sky and distance-fog colour.');
+        addColor('terrain', this.material.uniforms.uTerrainColor, 'Terrain', 'Sets the base colour of level ground.');
+        addColor('snow', this.material.uniforms.uSnowColor, 'Snow', 'Sets the colour of high, gently sloped snow.');
+        addColor('water', this.material.uniforms.uWaterColor, 'Water', 'Sets the base colour beneath water reflections.');
     }
 
     onWindowResize() {

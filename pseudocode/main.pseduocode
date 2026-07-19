@@ -1,0 +1,72 @@
+MODULE main
+
+START APPLICATION
+    create renderer, camera, landscape material, post-processing, and default settings
+    create colour state and editor readouts
+    restore saved landscape when browser storage contains a valid design
+    create explained controls for camera, terrain, editor, environment, bloom, and colours
+    listen for canvas clicks and window resizing
+    continuously render the scene
+
+ON CANVAS CLICK AT screen position
+    if all rock slots are occupied
+        report the rock limit
+        return
+    calculate the world ray for the clicked canvas position
+    find the terrain point intersected by that ray
+    if the ray misses terrain
+        report that visible ground must be clicked
+        return
+    place the next rock above the terrain point
+    update the rock-count readout
+    save the landscape and report the terrain point
+
+CREATE LANDSCAPE DATA
+    collect camera position and look-at point
+    collect terrain, environment, bloom, and colour settings
+    collect occupied rock positions
+    validate and return the complete Landscape
+
+APPLY LANDSCAPE data
+    validate all data before changing application state
+    apply camera, terrain, environment, bloom, and colour settings
+    clear every rock slot
+    copy imported rock positions into the available slots
+    update preset and rock-count readouts
+
+SAVE LANDSCAPE message
+    create validated Landscape data
+    write it to browser storage
+    report message
+    if creation or storage fails
+        report the underlying error
+
+RESTORE LANDSCAPE
+    read the saved JSON from browser storage
+    if no save exists
+        keep defaults
+    otherwise parse, validate, and apply it
+    report restoration or the underlying rejection reason
+
+EXPORT LANDSCAPE
+    create validated Landscape data
+    download it as formatted JSON
+    refresh browser storage
+    report export or the underlying failure
+
+IMPORT SELECTED LANDSCAPE FILE
+    read and parse the selected JSON file
+    validate the complete Landscape before changing the scene
+    apply it and refresh every control
+    save it in browser storage
+    report the filename or the underlying failure
+
+CLEAR ROCKS
+    empty every rock slot
+    update Rock Count
+    save the landscape
+
+FORGET AUTOSAVE
+    remove the browser storage entry
+    leave the visible landscape unchanged
+    report the result

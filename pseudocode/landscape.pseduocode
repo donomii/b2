@@ -1,0 +1,59 @@
+MODULE landscape
+
+PUBLIC CONSTANT LANDSCAPE STORAGE KEY
+    browser storage identifier for format version 1
+
+PUBLIC CONSTANT LANDSCAPE VERSION
+    current supported format version
+
+PUBLIC CONSTANT MAXIMUM USER ROCK COUNT
+    eight rocks
+
+PUBLIC FUNCTION SCREEN RAY
+INPUT
+    clicked screen position
+    canvas bounds
+    camera position
+    camera look-at point
+OUTPUT
+    normalized world direction
+BEHAVIOR
+    reject empty canvas bounds and degenerate camera vectors
+    convert the click to aspect-correct shader screen coordinates
+    build the same camera basis used for rendering
+    return the normalized world direction through the click
+
+PUBLIC FUNCTION TERRAIN DISTANCE AT
+INPUT
+    world point
+    terrain scale, height, and seed
+OUTPUT
+    signed distance from the generated terrain
+BEHAVIOR
+    calculate repeatable value noise from the seed
+    combine broad and ridged noise
+    warp the terrain noise domain
+    return world height minus generated terrain height
+
+PUBLIC FUNCTION TERRAIN HIT
+INPUT
+    ray origin
+    normalized ray direction
+    terrain settings
+OUTPUT
+    terrain WorldPosition or no result
+BEHAVIOR
+    advance along the ray by the terrain distance
+    return the sampled point when it reaches the surface tolerance
+    return no result after the sample limit, distance limit, invalid travel, or travel behind the origin
+
+PUBLIC FUNCTION VALIDATE LANDSCAPE
+INPUT
+    candidate value
+OUTPUT
+    validated Landscape
+BEHAVIOR
+    require exactly the documented top-level and nested fields
+    require supported version, finite values, documented ranges, exact colour strings, and at most eight rocks
+    reject the entire candidate on the first invalid field with expected and received details
+    return a complete validated copy without converting invalid values
