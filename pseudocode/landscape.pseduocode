@@ -26,13 +26,14 @@ BEHAVIOR
 PUBLIC FUNCTION TERRAIN DISTANCE AT
 INPUT
     world point
-    terrain scale, height, and seed
+    terrain scale, height, octave count, and seed
 OUTPUT
     signed distance from the generated terrain
 BEHAVIOR
     calculate repeatable value noise from the seed
-    combine broad and ridged noise
-    warp the terrain noise domain
+    use the requested 1 through 12 octave count for ridged terrain detail
+    use up to four requested octaves for domain warping and broad shape noise
+    combine broad and ridged noise on the same stationary surface used by rendering
     return world height minus generated terrain height
 
 PUBLIC FUNCTION TERRAIN HIT

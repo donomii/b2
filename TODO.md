@@ -6,3 +6,4 @@
 - [x] Explain every editor control and report rock count and persistence results.
 - [x] Cover click-ray, terrain-intersection, and landscape-format behavior with offline tests.
 - [x] Store the pinned rendering and editor dependencies locally so the launcher works offline.
+- [x] Make terrain octaves control the same generated surface in rendering, click picking, and placed-rock anchoring across the full 1 through 12 range.

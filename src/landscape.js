@@ -77,11 +77,12 @@ function fbm(point, octaves, seed, ridged) {
 
 export function terrainDistanceAt(point, settings) {
     const scaled = multiply(point, settings.scale);
-    const offsetX = fbm(multiply(scaled, 0.5), 4, settings.seed, false);
-    const offsetY = fbm(add(multiply(scaled, 0.5), [5.2, 1.3, 2.8]), 4, settings.seed, false);
+    const warpOctaves = Math.min(settings.octaves, 4);
+    const offsetX = fbm(multiply(scaled, 0.5), warpOctaves, settings.seed, false);
+    const offsetY = fbm(add(multiply(scaled, 0.5), [5.2, 1.3, 2.8]), warpOctaves, settings.seed, false);
     const warped = add(scaled, [offsetX * 0.5, offsetY * 0.5, 0]);
-    const ridges = fbm(warped, 8, settings.seed, true) * settings.height;
-    const broad = fbm(add(multiply(scaled, 0.2), [10, 10, 10]), 4, settings.seed, false) * settings.height * 0.5;
+    const ridges = fbm(warped, settings.octaves, settings.seed, true) * settings.height;
+    const broad = fbm(add(multiply(scaled, 0.2), [10, 10, 10]), warpOctaves, settings.seed, false) * settings.height * 0.5;
     return point[1] - ridges - broad;
 }
 

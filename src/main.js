@@ -64,10 +64,8 @@ const float MAX_DIST = 100.0;
 const float SURF_DIST = 0.01;
 
 float hash(vec3 p) {
-    p += uSeed;
-    vec3 p3 = fract(p * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
+    vec3 p3 = fract((p + uSeed) * 0.3183099 + 0.1) * 17.0;
+    return fract(p3.x * p3.y * p3.z * (p3.x + p3.y + p3.z));
 }
 
 float noise(vec3 x) {
@@ -83,7 +81,7 @@ float noise(vec3 x) {
 float fbm(vec3 p, int octaves) {
     float value = 0.0;
     float amplitude = 0.5;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 12; i++) {
         if(i >= octaves) break;
         value += amplitude * noise(p);
         p *= 2.0;
@@ -95,7 +93,7 @@ float fbm(vec3 p, int octaves) {
 float ridgedFbm(vec3 p, int octaves) {
     float value = 0.0;
     float amplitude = 0.5;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 12; i++) {
         if(i >= octaves) break;
         float n = noise(p);
         n = 1.0 - abs(n * 2.0 - 1.0);
@@ -178,27 +176,14 @@ vec2 opU(vec2 d1, vec2 d2) {
 }
 
 float Terrain(vec3 p) {
-    vec2 p2 = p.xz;
-    float dist = length(p2);
-    float islandMask = smoothstep(60.0, 15.0, dist);
-
-    // Domain warping
-    vec3 pWarp = p * uTerrainScale;
-    float w1 = fbm(pWarp * 0.3 + iTime * 0.02, 3);
-    float w2 = fbm(pWarp * 0.3 + vec3(12.4, 5.2, 1.3), 3);
-    pWarp += vec3(w1, w2, 0.0) * 0.8;
-
-    float h = ridgedFbm(pWarp, 8) * uTerrainHeight;
-    h += fbm(pWarp * 0.5 + 20.0, 4) * uTerrainHeight * 0.3;
-
-    // Base shape
-    h = h * islandMask;
-
-    // Add some "Bryce" spikes
-    float spikes = pow(noise(pWarp * 2.0), 4.0) * uTerrainHeight * 0.5;
-    h += spikes * islandMask;
-
-    return p.y - h;
+    vec3 scaled = p * uTerrainScale;
+    int warpOctaves = min(uOctaves, 4);
+    float offsetX = fbm(scaled * 0.5, warpOctaves);
+    float offsetY = fbm(scaled * 0.5 + vec3(5.2, 1.3, 2.8), warpOctaves);
+    vec3 warped = scaled + vec3(offsetX * 0.5, offsetY * 0.5, 0.0);
+    float ridges = ridgedFbm(warped, uOctaves) * uTerrainHeight;
+    float broad = fbm(scaled * 0.2 + vec3(10.0), warpOctaves) * uTerrainHeight * 0.5;
+    return p.y - ridges - broad;
 }
 
 vec2 GetDist(vec3 p) {
@@ -514,6 +499,7 @@ class BryceApp {
         return {
             scale: this.material.uniforms.uTerrainScale.value,
             height: this.material.uniforms.uTerrainHeight.value,
+            octaves: this.material.uniforms.uOctaves.value,
             seed: this.material.uniforms.uSeed.value
         };
     }

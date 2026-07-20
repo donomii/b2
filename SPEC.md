@@ -83,7 +83,7 @@ Each rock `WorldPosition` component ranges from `-100` through `100`. Unknown fi
 
 ## Terrain click algorithm
 
-The click position is converted to the same aspect-correct screen coordinates used by the landscape shader. The camera forward, horizontal, and vertical basis vectors produce a normalized world ray. The terrain distance function uses the saved terrain scale, height, and seed and matches the shader's value-noise, broad-noise, ridged-noise, and domain-warp calculations.
+The click position is converted to the same aspect-correct screen coordinates used by the landscape shader. The camera forward, horizontal, and vertical basis vectors produce a normalized world ray. The terrain distance function uses the saved terrain scale, height, octaves, and seed and matches the shader's value-noise, broad-noise, ridged-noise, and domain-warp calculations. The requested octave count controls ridged terrain detail from 1 through 12; domain-warp and broad-shape noise use the smaller of the requested count and 4. Rendering and click intersection use this same stationary surface, so placed rocks are anchored to the visible terrain at the selected octave setting.
 
 The ray advances by the terrain distance for at most 96 samples or 100 world units. It succeeds when the distance is below the distance-adjusted surface tolerance. Non-finite travel, travel behind the camera, or travel beyond 100 world units is a miss.
 

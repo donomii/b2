@@ -15,7 +15,7 @@ ON CANVAS CLICK AT screen position
         report the rock limit
         return
     calculate the world ray for the clicked canvas position
-    find the terrain point intersected by that ray
+    find the terrain point intersected by that ray using the current scale, height, octave count, and seed
     if the ray misses terrain
         report that visible ground must be clicked
         return

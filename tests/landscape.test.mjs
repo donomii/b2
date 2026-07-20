@@ -22,6 +22,61 @@ function landscapeData() {
     };
 }
 
+function shaderFract(value) {
+    return value - Math.floor(value);
+}
+
+function shaderMix(a, b, amount) {
+    return a * (1 - amount) + b * amount;
+}
+
+function shaderHash(point, seed) {
+    const hashed = point.map((value) => shaderFract((value + seed) * 0.3183099 + 0.1) * 17);
+    return shaderFract(hashed[0] * hashed[1] * hashed[2] * (hashed[0] + hashed[1] + hashed[2]));
+}
+
+function shaderNoise(point, seed) {
+    const cell = point.map(Math.floor);
+    const local = point.map((value) => {
+        const fraction = shaderFract(value);
+        return fraction * fraction * (3 - 2 * fraction);
+    });
+    const sample = (x, y, z) => shaderHash([cell[0] + x, cell[1] + y, cell[2] + z], seed);
+    const lowY = shaderMix(sample(0, 0, 0), sample(1, 0, 0), local[0]);
+    const highY = shaderMix(sample(0, 1, 0), sample(1, 1, 0), local[0]);
+    const lowZ = shaderMix(lowY, highY, local[1]);
+    const farLowY = shaderMix(sample(0, 0, 1), sample(1, 0, 1), local[0]);
+    const farHighY = shaderMix(sample(0, 1, 1), sample(1, 1, 1), local[0]);
+    const highZ = shaderMix(farLowY, farHighY, local[1]);
+    return shaderMix(lowZ, highZ, local[2]);
+}
+
+function shaderFbm(point, octaves, seed, ridged) {
+    let value = 0;
+    let amplitude = 0.5;
+    let samplePoint = point;
+    for (let octave = 0; octave < octaves; octave += 1) {
+        const sample = shaderNoise(samplePoint, seed);
+        value += (ridged ? 1 - Math.abs(sample * 2 - 1) : sample) * amplitude;
+        samplePoint = samplePoint.map((component) => component * 2);
+        amplitude *= 0.5;
+    }
+    return value;
+}
+
+function shaderTerrainDistanceAt(point, settings) {
+    const scaled = point.map((component) => component * settings.scale);
+    const warpOctaves = Math.min(settings.octaves, 4);
+    const halfScaled = scaled.map((component) => component * 0.5);
+    const offsetX = shaderFbm(halfScaled, warpOctaves, settings.seed, false);
+    const offsetY = shaderFbm(halfScaled.map((component, index) => component + [5.2, 1.3, 2.8][index]), warpOctaves, settings.seed, false);
+    const warped = scaled.map((component, index) => component + [offsetX * 0.5, offsetY * 0.5, 0][index]);
+    const ridges = shaderFbm(warped, settings.octaves, settings.seed, true) * settings.height;
+    const broadPoint = scaled.map((component) => component * 0.2 + 10);
+    const broad = shaderFbm(broadPoint, warpOctaves, settings.seed, false) * settings.height * 0.5;
+    return point[1] - ridges - broad;
+}
+
 test('the centre click ray follows the camera look-at direction', () => {
     const ray = screenRay(400, 300, { left: 0, top: 0, width: 800, height: 600 }, [0, 15, 30], [0, 0, 0]);
     assert.deepEqual(ray, [0, -0.447213595499958, -0.894427190999916]);
@@ -37,11 +92,32 @@ test('horizontal click position follows the shader horizontal basis', () => {
 
 test('terrain ray marching returns the clicked terrain surface', () => {
     const origin = [0, 15, 30];
-    const settings = { scale: 0.15, height: 8, seed: 42 };
+    const settings = { scale: 0.15, height: 8, octaves: 8, seed: 42 };
     const direction = screenRay(400, 300, { left: 0, top: 0, width: 800, height: 600 }, origin, [0, 0, 0]);
     const hit = terrainHit(origin, direction, settings);
     assert.ok(hit, 'the centre camera ray should hit generated terrain');
     assert.ok(Math.abs(terrainDistanceAt(hit, settings)) < 0.02, `hit should lie on terrain; received distance=${terrainDistanceAt(hit, settings)}`);
+});
+
+test('CPU terrain agrees with shader-equivalent fixtures at every supported octave extreme', async () => {
+    const points = [[0, 3, 0], [4.25, 9.5, -7.75], [-12.5, 2.25, 18.125]];
+    const observed = [];
+    for (const octaves of [1, 8, 12]) {
+        const settings = { scale: 0.15, height: 8, octaves, seed: 42 };
+        for (const point of points) {
+            const cpuDistance = terrainDistanceAt(point, settings);
+            const shaderDistance = shaderTerrainDistanceAt(point, settings);
+            assert.ok(Math.abs(cpuDistance - shaderDistance) < 1e-10, `octaves=${octaves} point=${point} CPU=${cpuDistance} shader=${shaderDistance}`);
+            observed.push(cpuDistance);
+        }
+    }
+    assert.notEqual(observed[0], observed[3], 'octaves 1 and 8 must produce different terrain');
+    assert.notEqual(observed[3], observed[6], 'octaves 8 and 12 must produce different terrain');
+
+    const main = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+    assert.match(main, /for \(int i = 0; i < 12; i\+\+\)/);
+    assert.match(main, /ridgedFbm\(warped, uOctaves\)/);
+    assert.match(main, /octaves: this\.material\.uniforms\.uOctaves\.value/);
 });
 
 test('landscape validation accepts the complete exported format', () => {
