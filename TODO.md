@@ -5,3 +5,4 @@
 - [x] Export complete designed landscapes as JSON and import them after strict validation.
 - [x] Explain every editor control and report rock count and persistence results.
 - [x] Cover click-ray, terrain-intersection, and landscape-format behavior with offline tests.
+- [x] Store the pinned rendering and editor dependencies locally so the launcher works offline.

@@ -1,9 +1,9 @@
-import * as THREE from 'https://esm.sh/three@0.160.0';
-import { OrbitControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js';
-import { EffectComposer } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'https://esm.sh/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js';
-import GUI from 'https://esm.sh/lil-gui@0.19.0';
+import * as THREE from 'three';
+import { OrbitControls } from '/vendor/three/addons/controls/OrbitControls.js';
+import { EffectComposer } from '/vendor/three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from '/vendor/three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '/vendor/three/addons/postprocessing/UnrealBloomPass.js';
+import GUI from '/vendor/lil-gui/lil-gui.esm.js';
 import {
     LANDSCAPE_STORAGE_KEY,
     LANDSCAPE_VERSION,

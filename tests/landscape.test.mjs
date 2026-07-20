@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
     MAX_USER_ROCKS,
@@ -57,4 +58,43 @@ test('landscape validation rejects unknown fields and excess rocks', () => {
     const excessRocks = landscapeData();
     excessRocks.rocks = Array.from({ length: MAX_USER_ROCKS + 1 }, () => [0, 0, 0]);
     assert.throws(() => validateLandscape(excessRocks), /at most 8 positions/);
+});
+
+test('browser runtime dependencies are complete and local', async () => {
+    const index = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+    const main = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+    assert.match(index, /"three": "\/vendor\/three\/three\.module\.js"/);
+    assert.doesNotMatch(main, /from\s+['"]https?:\/\//);
+
+    const vendoredModules = [
+        '../vendor/three/three.module.js',
+        '../vendor/three/addons/controls/OrbitControls.js',
+        '../vendor/three/addons/postprocessing/EffectComposer.js',
+        '../vendor/three/addons/postprocessing/RenderPass.js',
+        '../vendor/three/addons/postprocessing/UnrealBloomPass.js',
+        '../vendor/three/addons/postprocessing/Pass.js',
+        '../vendor/three/addons/postprocessing/ShaderPass.js',
+        '../vendor/three/addons/postprocessing/MaskPass.js',
+        '../vendor/three/addons/shaders/CopyShader.js',
+        '../vendor/three/addons/shaders/LuminosityHighPassShader.js',
+        '../vendor/lil-gui/lil-gui.esm.js'
+    ];
+    for (const modulePath of vendoredModules) {
+        const moduleUrl = new URL(modulePath, import.meta.url);
+        const source = await readFile(moduleUrl, 'utf8');
+        for (const match of source.matchAll(/from\s+['"]([^'"]+)['"]/g)) {
+            const dependency = match[1];
+            if (dependency === 'three') {
+                assert.match(index, /"three": "\/vendor\/three\/three\.module\.js"/);
+            } else {
+                assert.ok(dependency.startsWith('.'), `${modulePath} has non-local dependency ${dependency}`);
+                await readFile(new URL(dependency, moduleUrl), 'utf8');
+            }
+        }
+    }
+
+    const threeSource = await readFile(new URL('../vendor/three/three.module.js', import.meta.url), 'utf8');
+    const guiSource = await readFile(new URL('../vendor/lil-gui/lil-gui.esm.js', import.meta.url), 'utf8');
+    assert.match(threeSource, /const REVISION = '160';/);
+    assert.match(guiSource, /@version 0\.19\.0/);
 });

@@ -1,6 +1,8 @@
 MODULE main
 
 START APPLICATION
+    resolve rendering, post-processing, camera-control, and editor modules from the local vendor directory
+    make no network requests for runtime code
     create renderer, camera, landscape material, post-processing, and default settings
     create colour state and editor readouts
     restore saved landscape when browser storage contains a valid design

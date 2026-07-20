@@ -8,7 +8,7 @@ b2 is an interactive procedural-landscape designer rendered in a browser. The us
 
 The launcher is `/Users/jer/mygit/b2/start`. Running it serves the project at `http://localhost:8080` with no flags or configuration required.
 
-The browser loads `/Users/jer/mygit/b2/index.html`, which starts `/Users/jer/mygit/b2/src/main.js`. Terrain intersection and landscape-format behavior live in `/Users/jer/mygit/b2/src/landscape.js`.
+The browser loads `/Users/jer/mygit/b2/index.html`, which starts `/Users/jer/mygit/b2/src/main.js`. Terrain intersection and landscape-format behavior live in `/Users/jer/mygit/b2/src/landscape.js`. Three.js 0.160.0, its required addons, and lil-gui 0.19.0 are stored beneath `/Users/jer/mygit/b2/vendor`, so rendering and every editor control work without an internet connection.
 
 On startup, the application reads browser storage key `b2.landscape.v1`. A valid saved landscape replaces the defaults before the controls appear. Missing storage keeps the defaults. Unreadable or invalid storage is rejected, the defaults remain active, and Save Status explains the failure.
 
